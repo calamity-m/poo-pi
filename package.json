@@ -1,0 +1,49 @@
+{
+  "name": "poo-pi",
+  "version": "0.1.0",
+  "description": "A starter Pi package bundling themes, skills, extensions, and prompt templates.",
+  "license": "MIT",
+  "type": "module",
+  "keywords": [
+    "pi-package",
+    "pi-coding-agent",
+    "pi-extension",
+    "pi-theme",
+    "agent-skills"
+  ],
+  "pi": {
+    "extensions": [
+      "./extensions"
+    ],
+    "skills": [
+      "./skills"
+    ],
+    "prompts": [
+      "./prompts"
+    ],
+    "themes": [
+      "./themes"
+    ]
+  },
+  "peerDependencies": {
+    "@earendil-works/pi-coding-agent": "*",
+    "typebox": "*"
+  },
+  "scripts": {
+    "validate:json": "node -e \"for (const f of ['themes/poo-dark.json','themes/poo-light.json','package.json']) JSON.parse(require('fs').readFileSync(f,'utf8')); console.log('json ok')\"",
+    "fixtures:tls": "node scripts/generate-tls-fixtures.mjs",
+    "smoke:tls-fixture": "node scripts/smoke-tls-fixture.mjs",
+    "smoke:tls-consumers": "node scripts/smoke-tls-consumers.mjs",
+    "pack:dry-run": "npm pack --dry-run"
+  },
+  "files": [
+    "extensions/",
+    "skills/",
+    "prompts/",
+    "themes/",
+    "scripts/",
+    "test-fixtures/tls/README.md",
+    "README.md",
+    "LICENSE"
+  ]
+}
