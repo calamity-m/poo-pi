@@ -134,9 +134,11 @@ registerTls(pi):
   pi.registerCommand("tls-setup", metadataOnlyRetryHandler)
   return provider
 
-// Consumer contract: undefined / non-loaded TLS means FAIL CLOSED,
+// Consumer contract: undefined / non-loaded TLS means FAIL CLOSED for websearch,
 // never "proceed without the client cert".
-proxyRequest(tlsProvider, ...):
+// NOTE: the proxy consumer intentionally diverges — it attaches the cert when
+// loaded and forwards without it otherwise (never blocks). See docs/plans/proxy-bigplan.md.
+websearchRequest(tlsProvider, ...):
   tls = tlsProvider.getClientTls()
   if tls is undefined: fail closed with redacted status
   else: use tls.secureContext for the outbound mTLS connection
@@ -229,15 +231,16 @@ Verify the feature satisfies the security promises: no LLM-callable path can pri
 
 ### Deliverable 6. Consumer wiring (proxy and websearch)
 
-Wire both core consumers to actually use the loaded client TLS, proving the provider is consumable end-to-end. `registerProxy` and `registerWebsearch` are currently no-arg placeholders, so the pseudo-code's `tlsProvider` argument does not exist yet. Each consumer reads the provider lazily at request-time and fails closed when TLS is unavailable — it must never silently proceed without the client certificate. This is the difference between "a provider exists" and "Pi can use a loaded client cert."
+Wire both core consumers to actually use the loaded client TLS, proving the provider is consumable end-to-end. Each consumer reads the provider lazily at request-time. **Websearch fails closed** when TLS is unavailable. **The proxy intentionally does not** — it attaches the cert opportunistically when loaded and forwards without it otherwise (never blocks traffic); see `docs/plans/proxy-bigplan.md` for that decision. This is the difference between "a provider exists" and "Pi can use a loaded client cert."
 
-- [ ] Update `registerProxy(pi, { tlsProvider })` to accept and store the provider, and apply `getClientTls()`'s `SecureContext` to its outbound mTLS connections.
+- [x] `registerProxy(pi, { tlsProvider })` accepts the provider and attaches `getClientTls()`'s `SecureContext` to its outbound HTTPS leg when a cert is loaded, forwarding without it otherwise (implemented by proxy-bigplan; the proxy does **not** fail closed).
 - [ ] Update `registerWebsearch(pi, { tlsProvider })` to accept and store the provider, and apply the client TLS to its outbound requests.
 - [x] Define and document the fail-closed contract: when `getClientTls()` returns `undefined`, the consumer aborts with a redacted status rather than connecting without the cert.
 - [x] Add a smoke check that a consumer applies the loaded `SecureContext` after `session_start`, and fails closed before TLS resolves.
 
 ## Issues
 
+- **2026-06-02 — agent:claude (proxy reconciliation)** — The proxy consumer is now implemented (see `docs/plans/proxy-bigplan.md`) and deliberately **does not fail closed**: it attaches the client cert when loaded and forwards without it otherwise, so a missing/expired cert or a throwing TLS provider degrades to no-client-TLS rather than blocking LLM traffic. The Overview, the consumer-contract pseudo-code, and Deliverable 6 are updated so the fail-closed contract now applies to **websearch only**; the websearch fail-closed task is unchanged.
 - **2026-06-02 — agent:claude (implementation)** — Implemented D1-D4 and the available security/consumer smoke checks. Fingerprint exposure was dropped from the implementation and plan sketch, leaving no certificate fingerprint in redacted status until the open sensitivity question is resolved. Proxy/websearch currently have fail-closed TLS resolution helpers because the repo still has placeholder consumers with no outbound request implementation to attach a `SecureContext` to.
 - **2026-06-02 — user + agent:claude (design)** — Committed to a multi-source architecture as a planned, first-class part of the design (not just a future hook). Setup is now a 3-stage wizard (source picker → source-owned target chooser → optional passphrase), backed by a `ClientTlsSource` registry and an orthogonal `PassphraseProvider` seam. **Implementation scope is unchanged**: only the `pfx-file` source and the interactive passphrase provider are built this iteration; keyring/`pass`/PKCS#11 are documented seams, not deliverables. Stage 1 auto-skips with a single source so the PFX-only build stays a plain file-pick + password flow. Reshaped Target behavior, API shape, Gotchas, Pseudo-code, and Deliverables 2 & 3.
 - **2026-06-02 — agent:claude** — Open question (deferred): does PKCS#11/HSM (non-exportable hardware-backed keys) ever come into scope? If yes, the provider must return an opaque connect handle (e.g. configured `https.Agent`) instead of `secureContext: SecureContext`, since an HSM key cannot build a SecureContext from in-process bytes. Resolve before Deliverable 2 freezes the loaded-state return type.

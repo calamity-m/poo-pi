@@ -1,5 +1,6 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import { registerClear } from "./extensions/clear.ts";
 import { registerModels } from "./extensions/models.ts";
 import { registerPermissions } from "./extensions/permissions/index.ts";
 import { registerProxy } from "./extensions/proxy/index.ts";
@@ -12,9 +13,11 @@ import { registerWebsearch } from "./extensions/websearch.ts";
  */
 export default function core(pi: ExtensionAPI) {
   const tlsProvider = registerTls(pi);
+  registerClear(pi);
   registerModels(pi);
   registerSubagents(pi);
-  // TLS resolves during session_start; consumers read lazily at request-time and fail closed before it is loaded.
+  // TLS resolves during session_start; the proxy reads it lazily per request and attaches the
+  // client cert when loaded, forwarding without it otherwise (never blocks traffic).
   registerProxy(pi, { tlsProvider });
   registerPermissions(pi);
   registerWebsearch(pi, { tlsProvider });

@@ -1,26 +1,50 @@
-import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
+import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import type { ClientTlsProvider, LoadedClientTls } from "../tls/index.ts";
+import { registerProxyAuditCommand } from "./command.ts";
+import { applyProviderOverrides } from "./routes.ts";
+import { startProxyServer, stopProxyServer } from "./server.ts";
+import { createProxyState, type ProxyState, type RegisterProxyOptions } from "./types.ts";
 
-/** Options used to wire proxy support to core TLS without reading TLS at registration time. */
-export interface RegisterProxyOptions {
-  /** Lazy-read TLS provider; proxy requests must fail closed when it has no loaded certificate. */
-  tlsProvider: ClientTlsProvider;
+export type { RegisterProxyOptions } from "./types.ts";
+export { resolveProxyClientTls } from "./tls.ts";
+
+const PROXY_MEMORY_KEY = "__pooPiCoreProxyState";
+
+/**
+ * Return the process-local proxy state, reused across Pi runtime reloads in the
+ * same Node process. Persisting it keeps the ephemeral server bound and the
+ * route map intact across `/reload` and `/new`, so re-registration recovers
+ * already-proxied base URLs instead of double-wrapping them into dead routes.
+ */
+function getProxyState(): ProxyState {
+  const scope = globalThis as typeof globalThis & { [PROXY_MEMORY_KEY]?: ProxyState };
+  scope[PROXY_MEMORY_KEY] ??= createProxyState();
+  return scope[PROXY_MEMORY_KEY]!;
 }
 
-/** Result of resolving TLS for a proxy request. */
-export type ProxyTlsResolution =
-  | { ok: true; tls: LoadedClientTls }
-  | { ok: false; message: string };
+/**
+ * Register the provider reverse proxy: start the loopback server, re-register
+ * providers through it, originate mTLS on the upstream leg when a client
+ * certificate is loaded, audit each request, and expose the `/proxy-audit`
+ * operator command.
+ *
+ * The server starts before any base-URL overrides are applied, and overrides
+ * are skipped entirely when it fails to start so providers are never stranded
+ * pointing at a dead `127.0.0.1`.
+ */
+export function registerProxy(pi: ExtensionAPI, options: RegisterProxyOptions): void {
+  const state = getProxyState();
+  const { tlsProvider } = options;
 
-/** Register provider reverse proxy support and retain the lazy TLS provider for request-time reads. */
-export function registerProxy(_pi: ExtensionAPI, options: RegisterProxyOptions) {
-  void options;
-}
+  const ensure = async (ctx: ExtensionContext): Promise<void> => {
+    await startProxyServer(state, tlsProvider, ctx.cwd);
+    await applyProviderOverrides(pi, ctx, state);
+  };
 
-/** Resolve TLS for an outbound proxy request, failing closed when no client certificate is loaded. */
-export function requireProxyClientTls(tlsProvider: ClientTlsProvider): ProxyTlsResolution {
-  const tls = tlsProvider.getClientTls();
-  if (!tls) return { ok: false, message: tlsProvider.getClientTlsStatus().message };
-  return { ok: true, tls };
+  // Both fire the idempotent ensure path; re-applying recovers already-proxied routes.
+  pi.on("session_start", (_event, ctx) => ensure(ctx));
+  pi.on("before_agent_start", (_event, ctx) => ensure(ctx));
+  pi.on("session_shutdown", () => stopProxyServer(state));
+
+  registerProxyAuditCommand(pi, state);
 }
