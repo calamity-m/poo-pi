@@ -63,16 +63,25 @@ Strong success criteria let you loop independently. Weak criteria require clarif
 
 ## 5. In-Code Documentation
 
-**Public API must be documented. Internal logic should explain the why.**
+**Strongly prefer TSDoc/JSDoc on all functions. Complex or unclear logic should explain the why.**
 
 This repo is primarily TypeScript plus Markdown and JSON package resources.
 
-- Use JSDoc for exported TypeScript functions, types, classes, constants, command handlers, and tool interfaces when their purpose or constraints are not obvious.
+- Heavily prefer TSDoc/JSDoc for every TypeScript function, method, class, type, constant, command handler, and tool interface, exported or internal.
+- Keep documentation concise: describe purpose, important constraints, parameters, return values, and side effects when they are not immediately obvious.
 - Prompt and skill Markdown should document user-facing behavior directly in the file; keep frontmatter descriptions accurate.
-- For internal code, comment the why, not the what. One short line is usually enough.
-- Do not comment code that already reads plainly.
+- For complex or unclear internal operations, add code comments that explain the why, not the what. One short line is usually enough.
+- Do not comment code that already reads plainly unless a TSDoc/JSDoc block is expected by this guidance.
 
-## 6. Pre-commit Hooks
+## 6. File Size
+
+**Prefer files under 1,000 lines.**
+
+- Do not let a file grow beyond 1,000 lines unless there is a clear, documented reason.
+- Split cohesive logic into smaller files earlier to avoid reaching 1,000 lines.
+- Avoid splitting files mechanically; preserve readable ownership boundaries and simple imports.
+
+## 7. Pre-commit Hooks
 
 **Prefer repeatable hooks and scripts over manual memory.**
 
@@ -83,7 +92,7 @@ Current runnable checks:
 
 There is no pre-commit config in this repo yet. If checks are repeatedly missed, add a small pre-commit hook that runs the npm scripts above; if TypeScript grows beyond the current extension files, add an appropriate `tsc --noEmit` check before relying on reviews.
 
-## 7. Repository Map
+## 8. Repository Map
 
 ### Key directories
 
@@ -110,7 +119,7 @@ extensions/poo-pi.ts -> registers /poo-pi command + poo_pi_package_info tool -> 
 npm pack --dry-run -> package.json files list -> publishable tarball contents
 ```
 
-## 8. Project-Specific Notes
+## 9. Project-Specific Notes
 
 - This is an installable Pi package; keep Pi-provided imports such as `@earendil-works/pi-coding-agent` and `typebox` as peer dependencies with `"*"` unless packaging needs change.
 - Prompt files are non-recursive: only top-level `prompts/*.md` become slash commands.
