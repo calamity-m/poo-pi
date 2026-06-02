@@ -67,5 +67,9 @@ export interface ClientTlsSource {
   /** Validate a persisted target before skipping source/target selection on later startups. */
   validateTarget(ctx: ExtensionContext, target: SourceTarget): Promise<boolean>;
   /** Load TLS material using an injected passphrase provider so secret origin stays independent of cert origin. */
-  load(ctx: ExtensionContext, target: SourceTarget, passphrase: PassphraseProvider): Promise<ClientTlsState>;
+  load(
+    ctx: ExtensionContext,
+    target: SourceTarget,
+    passphrase: PassphraseProvider,
+  ): Promise<ClientTlsState>;
 }

@@ -26,7 +26,8 @@ export default function pooPi(pi: ExtensionAPI) {
   pi.registerTool({
     name: "poo_pi_package_info",
     label: "Poo Pi Package Info",
-    description: "List the extensions, skills, prompts, and themes bundled with the poo-pi package.",
+    description:
+      "List the extensions, skills, prompts, and themes bundled with the poo-pi package.",
     promptSnippet: "List bundled poo-pi package resources when asked about this package.",
     parameters: Type.Object({}),
     async execute() {
@@ -41,5 +42,4 @@ export default function pooPi(pi: ExtensionAPI) {
       };
     },
   });
-
 }

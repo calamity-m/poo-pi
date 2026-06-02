@@ -17,7 +17,7 @@ Implement the TLS portion of core so Pi can load a password-protected PFX/P12 cl
 
 ### Target behavior
 
-TLS resolves client material through a **registry of cert sources**, each owning two orthogonal concerns the old single-resolver model conflated: *where the cert comes from* and (separately) *where its passphrase comes from*. A source is selected by priority and contributes its own stage-2 chooser; passphrases are supplied by a pluggable `PassphraseProvider` so a future `pass`/keyring secret source slots into the same PFX load path without a new source. **This iteration implements exactly one source (`pfx-file`) and one passphrase provider (interactive hidden prompt)**; the registry and wizard are built to hold more (keyring, `pass`, PKCS#11) but are not populated.
+TLS resolves client material through a **registry of cert sources**, each owning two orthogonal concerns the old single-resolver model conflated: _where the cert comes from_ and (separately) _where its passphrase comes from_. A source is selected by priority and contributes its own stage-2 chooser; passphrases are supplied by a pluggable `PassphraseProvider` so a future `pass`/keyring secret source slots into the same PFX load path without a new source. **This iteration implements exactly one source (`pfx-file`) and one passphrase provider (interactive hidden prompt)**; the registry and wizard are built to hold more (keyring, `pass`, PKCS#11) but are not populated.
 
 Interactive setup is a **3-stage wizard**:
 
@@ -34,7 +34,7 @@ Startup resolution order:
 
 The full wizard is **re-entrant** by two paths: (a) clearing persistence — deleting the project-local config file drops the fast path so the next startup runs the wizard cold; and (b) running the `/tls-setup` command at any time, which **forces stage 1 regardless of a valid persisted target**, re-resolves TLS in place, and overwrites the persisted `SourceTarget` on success. The command path is the supported way to switch source or fix a wrong target without manually editing files.
 
-Non-interactive startup should not attempt hidden TUI prompts (gate on `ctx.hasUI === false`). It may still resolve fully when a persisted target validates *and* the source's passphrase provider can supply the secret without UI (the future `pass`/keyring path). When a secret is required but only obtainable interactively, TLS fails closed with a status that tells the human to run `/tls-setup`, without serializing secret-bearing state.
+Non-interactive startup should not attempt hidden TUI prompts (gate on `ctx.hasUI === false`). It may still resolve fully when a persisted target validates _and_ the source's passphrase provider can supply the secret without UI (the future `pass`/keyring path). When a secret is required but only obtainable interactively, TLS fails closed with a status that tells the human to run `/tls-setup`, without serializing secret-bearing state.
 
 ### Public/internal API shape
 
@@ -100,7 +100,7 @@ Keep raw cert bytes and passphrases inside the source's load call stack where po
 - Confirmed in the installed Pi (`types.d.ts`): `ctx.hasUI` (boolean) exists for gating prompts, `ctx.ui.custom<T>()` exists and the `secret-input` reference masks input via a `render()` returning `"*"`, and `ctx.ui.setStatus(key, text)` exists for the status line. `ctx.ui.custom()` can implement hidden secret input; ordinary `ctx.ui.input()` is not acceptable for passwords.
 - No project-level config/storage API exists on `ExtensionAPI` — only `appendEntry()` (session-scoped). Remembering the chosen source/target across sessions therefore requires a project-local config file, not Pi-managed state. Persist the whole `SourceTarget` (`{ sourceId, locator, label }`), not just a path.
 - Stage 1 (source picker) must auto-skip when the registry holds a single source, or today's PFX-only build forces a one-option prompt. Stage 2 is owned by the source (file picker for PFX, entry list for a keyring) — do not hardcode a global file picker. Stage 3 is conditional on `source.needsPassphrase` and on whether the `PassphraseProvider` can supply non-interactively.
-- Cert source and secret source are orthogonal: a future `pass`/keyring `PassphraseProvider` feeds the *existing* `pfx-file` source. Resist folding secret origin into the source list (it causes a combinatorial `pfx+prompt`/`pfx+pass`/... explosion).
+- Cert source and secret source are orthogonal: a future `pass`/keyring `PassphraseProvider` feeds the _existing_ `pfx-file` source. Resist folding secret origin into the source list (it causes a combinatorial `pfx+prompt`/`pfx+pass`/... explosion).
 - OpenSSL 3.x default `.p12` encryption (PBES2/AES) vs legacy RC2/3DES: pin an algorithm Node can load and verify with the D1 smoke check before relying on the fixture (see PFX/Node load incompatibility risk).
 - `pi.appendEntry()` state does not participate in LLM context, but it is session persistence. It is still the wrong place for passwords and may be the wrong scope for remembering certificate path.
 - Status lines and notifications must avoid full paths if paths are considered sensitive in this environment; at minimum, never include PFX bytes, passphrase length, or decrypted certificate data.

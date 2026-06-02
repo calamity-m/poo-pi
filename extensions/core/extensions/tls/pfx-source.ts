@@ -33,9 +33,16 @@ export function createInteractivePassphraseProvider(): PassphraseProvider {
 
 /** Stage-2 PFX chooser with a simple browser and manual path fallback. */
 async function choosePfxTarget(ctx: ExtensionContext): Promise<SourceTarget | undefined> {
-  const mode = await ctx.ui.select("Choose PFX/P12 certificate", ["Enter path manually", "Browse current directory", "Browse home directory"]);
+  const mode = await ctx.ui.select("Choose PFX/P12 certificate", [
+    "Enter path manually",
+    "Browse current directory",
+    "Browse home directory",
+  ]);
   if (!mode) return undefined;
-  const path = mode === "Enter path manually" ? await promptForPfxPath(ctx) : await browseForPfxPath(ctx, mode === "Browse home directory" ? homedir() : ctx.cwd);
+  const path =
+    mode === "Enter path manually"
+      ? await promptForPfxPath(ctx)
+      : await browseForPfxPath(ctx, mode === "Browse home directory" ? homedir() : ctx.cwd);
   if (!path) return undefined;
   const locator = normalizePath(ctx, path);
   return { sourceId: PFX_SOURCE_ID, locator, label: basename(locator) };
@@ -48,11 +55,17 @@ async function promptForPfxPath(ctx: ExtensionContext): Promise<string | undefin
 }
 
 /** Browse directories with a PFX/P12 extension filter and explicit navigation entries. */
-async function browseForPfxPath(ctx: ExtensionContext, startDir: string): Promise<string | undefined> {
+async function browseForPfxPath(
+  ctx: ExtensionContext,
+  startDir: string,
+): Promise<string | undefined> {
   let current = normalizePath(ctx, startDir);
   for (;;) {
     const entries = await listPfxBrowserEntries(current);
-    const selected = await ctx.ui.select(`Choose PFX/P12 in ${basename(current) || current}`, entries.map((entry) => entry.label));
+    const selected = await ctx.ui.select(
+      `Choose PFX/P12 in ${basename(current) || current}`,
+      entries.map((entry) => entry.label),
+    );
     if (!selected) return undefined;
     const entry = entries.find((candidate) => candidate.label === selected);
     if (!entry) return undefined;
@@ -65,13 +78,24 @@ async function browseForPfxPath(ctx: ExtensionContext, startDir: string): Promis
       current = entry.path;
       continue;
     }
-    return entry.path;
+    if (entry.kind === "file") return entry.path;
+    return undefined;
   }
 }
 
 /** Return browser entries, filtering files to PFX/P12 while keeping directory navigation visible. */
-async function listPfxBrowserEntries(directory: string): Promise<Array<{ label: string; kind: "manual" | "up" } | { label: string; kind: "directory" | "file"; path: string }>> {
-  const entries: Array<{ label: string; kind: "manual" | "up" } | { label: string; kind: "directory" | "file"; path: string }> = [
+async function listPfxBrowserEntries(
+  directory: string,
+): Promise<
+  Array<
+    | { label: string; kind: "manual" | "up" }
+    | { label: string; kind: "directory" | "file"; path: string }
+  >
+> {
+  const entries: Array<
+    | { label: string; kind: "manual" | "up" }
+    | { label: string; kind: "directory" | "file"; path: string }
+  > = [
     { label: "Enter path manually", kind: "manual" },
     { label: "..", kind: "up" },
   ];
@@ -79,8 +103,10 @@ async function listPfxBrowserEntries(directory: string): Promise<Array<{ label: 
     const names = await readdir(directory, { withFileTypes: true });
     for (const entry of names.sort((left, right) => left.name.localeCompare(right.name))) {
       const fullPath = join(directory, entry.name);
-      if (entry.isDirectory()) entries.push({ label: `${entry.name}/`, kind: "directory", path: fullPath });
-      if (entry.isFile() && isPfxPath(entry.name)) entries.push({ label: entry.name, kind: "file", path: fullPath });
+      if (entry.isDirectory())
+        entries.push({ label: `${entry.name}/`, kind: "directory", path: fullPath });
+      if (entry.isFile() && isPfxPath(entry.name))
+        entries.push({ label: entry.name, kind: "file", path: fullPath });
     }
   } catch {
     // Keep the manual fallback available without exposing filesystem errors or paths in UI output.
@@ -100,16 +126,27 @@ async function validatePfxTarget(_ctx: ExtensionContext, target: SourceTarget): 
 }
 
 /** Load a PFX/P12 into a SecureContext while dropping raw bytes and passphrase after each validation attempt. */
-async function loadPfxTarget(ctx: ExtensionContext, target: SourceTarget, passphraseProvider: PassphraseProvider): Promise<ClientTlsState> {
+async function loadPfxTarget(
+  ctx: ExtensionContext,
+  target: SourceTarget,
+  passphraseProvider: PassphraseProvider,
+): Promise<ClientTlsState> {
   let pfx: Buffer;
   try {
     pfx = await readFile(target.locator);
   } catch {
-    return { status: "error", sourceId: PFX_SOURCE_ID, message: "tls: unable to read client certificate" };
+    return {
+      status: "error",
+      sourceId: PFX_SOURCE_ID,
+      message: "tls: unable to read client certificate",
+    };
   }
 
   for (;;) {
-    const passphrase = await passphraseProvider.getPassphrase(ctx, `Passphrase for ${target.label}`);
+    const passphrase = await passphraseProvider.getPassphrase(
+      ctx,
+      `Passphrase for ${target.label}`,
+    );
     if (passphrase === undefined) return { status: "unconfigured" };
     const secureContext = validatePfxPassphrase(pfx, passphrase);
     if (secureContext) {
@@ -124,10 +161,23 @@ async function loadPfxTarget(ctx: ExtensionContext, target: SourceTarget, passph
       };
     }
 
-    if (!ctx.hasUI) return { status: "error", sourceId: PFX_SOURCE_ID, message: "tls: invalid client certificate passphrase" };
+    if (!ctx.hasUI)
+      return {
+        status: "error",
+        sourceId: PFX_SOURCE_ID,
+        message: "tls: invalid client certificate passphrase",
+      };
     ctx.ui.notify("tls: certificate password was not valid", "warning");
-    const retry = await ctx.ui.confirm("TLS certificate password failed", "Try entering the password again?");
-    if (!retry) return { status: "error", sourceId: PFX_SOURCE_ID, message: "tls: invalid client certificate passphrase" };
+    const retry = await ctx.ui.confirm(
+      "TLS certificate password failed",
+      "Try entering the password again?",
+    );
+    if (!retry)
+      return {
+        status: "error",
+        sourceId: PFX_SOURCE_ID,
+        message: "tls: invalid client certificate passphrase",
+      };
   }
 }
 

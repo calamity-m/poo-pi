@@ -3,8 +3,22 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { readPersistedTarget, writePersistedTarget } from "./persistence.ts";
 export { hasPersistedClientTlsConfig } from "./persistence.ts";
 import { createInteractivePassphraseProvider, createPfxFileSource } from "./pfx-source.ts";
-import type { ClientTlsProvider, ClientTlsSource, ClientTlsState, PassphraseProvider, RedactedClientTlsStatus, SourceTarget } from "./types.ts";
-export type { ClientTlsProvider, ClientTlsSource, LoadedClientTls, PassphraseProvider, RedactedClientTlsStatus, SourceTarget } from "./types.ts";
+import type {
+  ClientTlsProvider,
+  ClientTlsSource,
+  ClientTlsState,
+  PassphraseProvider,
+  RedactedClientTlsStatus,
+  SourceTarget,
+} from "./types.ts";
+export type {
+  ClientTlsProvider,
+  ClientTlsSource,
+  LoadedClientTls,
+  PassphraseProvider,
+  RedactedClientTlsStatus,
+  SourceTarget,
+} from "./types.ts";
 
 const STATUS_KEY = "core-tls";
 const TLS_MEMORY_KEY = "__pooPiCoreTlsMemory";
@@ -37,7 +51,10 @@ export function registerTls(pi: ExtensionAPI): ClientTlsProvider {
     if (event.reason !== "startup") {
       // Pi rebinds extensions for /reload and /new; reuse same-process TLS instead of prompting again.
       state = memory.state;
-      ctx.ui.setStatus(STATUS_KEY, state.status === "loaded" ? formatStatusLine(redactState(state)) : undefined);
+      ctx.ui.setStatus(
+        STATUS_KEY,
+        state.status === "loaded" ? formatStatusLine(redactState(state)) : undefined,
+      );
       return;
     }
 
@@ -45,7 +62,8 @@ export function registerTls(pi: ExtensionAPI): ClientTlsProvider {
     state = await resolveClientTls(ctx, sources, passphrases);
     memory.state = state;
     ctx.ui.setStatus(STATUS_KEY, formatStatusLine(redactState(state)));
-    if (state.status === "unconfigured" && !ctx.hasUI) ctx.ui.notify("tls: setup required; run /tls-setup interactively", "warning");
+    if (state.status === "unconfigured" && !ctx.hasUI)
+      ctx.ui.notify("tls: setup required; run /tls-setup interactively", "warning");
     if (state.status === "error" && !ctx.hasUI) ctx.ui.notify(state.message, "warning");
   });
 
@@ -78,7 +96,8 @@ export async function resolveClientTls(
   const saved = options.force ? undefined : await readPersistedTarget(ctx);
   if (saved) {
     const source = sources.find((candidate) => candidate.id === saved.sourceId);
-    if (source && (await source.validateTarget(ctx, saved))) return loadWithProvider(ctx, source, saved, passphrases);
+    if (source && (await source.validateTarget(ctx, saved)))
+      return loadWithProvider(ctx, source, saved, passphrases);
   }
 
   if (!ctx.hasUI) return { status: "unconfigured" };
@@ -98,7 +117,10 @@ function createSourceRegistry(sources: ClientTlsSource[]): ClientTlsSource[] {
 }
 
 /** Stage 1 source picker; single-source registries auto-skip to keep today's UX direct. */
-async function chooseSource(ctx: ExtensionContext, sources: ClientTlsSource[]): Promise<ClientTlsSource | undefined> {
+async function chooseSource(
+  ctx: ExtensionContext,
+  sources: ClientTlsSource[],
+): Promise<ClientTlsSource | undefined> {
   if (sources.length === 1) return sources[0];
   const labels = sources.map((source) => source.label);
   const selected = await ctx.ui.select("Choose TLS certificate source", labels);
@@ -112,8 +134,15 @@ async function loadWithProvider(
   target: SourceTarget,
   passphrases: PassphraseProvider[],
 ): Promise<ClientTlsState> {
-  const provider = source.needsPassphrase ? passphrases.find((candidate) => candidate.canProvide(ctx)) : createEmptyPassphraseProvider();
-  if (!provider) return { status: "error", sourceId: source.id, message: "tls: passphrase requires interactive setup; run /tls-setup" };
+  const provider = source.needsPassphrase
+    ? passphrases.find((candidate) => candidate.canProvide(ctx))
+    : createEmptyPassphraseProvider();
+  if (!provider)
+    return {
+      status: "error",
+      sourceId: source.id,
+      message: "tls: passphrase requires interactive setup; run /tls-setup",
+    };
   return source.load(ctx, target, provider);
 }
 
@@ -127,8 +156,15 @@ function createEmptyPassphraseProvider(): PassphraseProvider {
 
 /** Convert internal state to metadata-only status for UI and command output. */
 function redactState(state: ClientTlsState): RedactedClientTlsStatus {
-  if (state.status === "loaded") return { status: "loaded", sourceId: state.tls.sourceId, targetLabel: state.tls.targetLabel, message: "tls: loaded" };
-  if (state.status === "error") return { status: "error", sourceId: state.sourceId, message: state.message };
+  if (state.status === "loaded")
+    return {
+      status: "loaded",
+      sourceId: state.tls.sourceId,
+      targetLabel: state.tls.targetLabel,
+      message: "tls: loaded",
+    };
+  if (state.status === "error")
+    return { status: "error", sourceId: state.sourceId, message: state.message };
   return { status: "unconfigured", message: "tls: unconfigured" };
 }
 

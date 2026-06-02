@@ -9,7 +9,9 @@ import type { SourceTarget } from "./types.ts";
 const CONFIG_PATH = join(".pi", "core-client-tls.json");
 
 /** Read non-secret source target metadata from the project-local config file. */
-export async function readPersistedTarget(ctx: ExtensionContext): Promise<SourceTarget | undefined> {
+export async function readPersistedTarget(
+  ctx: ExtensionContext,
+): Promise<SourceTarget | undefined> {
   try {
     const parsed = JSON.parse(await readFile(configFilePath(ctx), "utf8"));
     if (isSourceTarget(parsed)) return parsed;
@@ -20,7 +22,10 @@ export async function readPersistedTarget(ctx: ExtensionContext): Promise<Source
 }
 
 /** Persist only source target metadata after a successful load; never write passphrases or cert bytes. */
-export async function writePersistedTarget(ctx: ExtensionContext, target: SourceTarget): Promise<void> {
+export async function writePersistedTarget(
+  ctx: ExtensionContext,
+  target: SourceTarget,
+): Promise<void> {
   const file = configFilePath(ctx);
   await mkdir(dirname(file), { recursive: true });
   await writeFile(file, `${JSON.stringify(target, null, 2)}\n`, { mode: 0o600 });
@@ -40,5 +45,9 @@ function configFilePath(ctx: ExtensionContext): string {
 function isSourceTarget(value: unknown): value is SourceTarget {
   if (!value || typeof value !== "object") return false;
   const target = value as Record<string, unknown>;
-  return typeof target.sourceId === "string" && typeof target.locator === "string" && typeof target.label === "string";
+  return (
+    typeof target.sourceId === "string" &&
+    typeof target.locator === "string" &&
+    typeof target.label === "string"
+  );
 }

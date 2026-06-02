@@ -1,11 +1,17 @@
 import type { ExtensionContext, KeybindingsManager } from "@earendil-works/pi-coding-agent";
 
 /** Prompt for a secret using a custom masked component so the value never enters chat history. */
-export async function promptHiddenSecret(ctx: ExtensionContext, title: string): Promise<string | undefined> {
-  return ctx.ui.custom<string | undefined>((tui, theme, keybindings, done) => new MaskedSecretInput(tui, theme, keybindings, done, title), {
-    overlay: true,
-    overlayOptions: { width: "70%", minWidth: 48, maxHeight: 5 },
-  });
+export async function promptHiddenSecret(
+  ctx: ExtensionContext,
+  title: string,
+): Promise<string | undefined> {
+  return ctx.ui.custom<string | undefined>(
+    (tui, theme, keybindings, done) => new MaskedSecretInput(tui, theme, keybindings, done, title),
+    {
+      overlay: true,
+      overlayOptions: { width: "70%", minWidth: 48, maxHeight: 5 },
+    },
+  );
 }
 
 /** Minimal vendored masked input component adapted from the local secret-input reference extension. */
@@ -56,14 +62,17 @@ class MaskedSecretInput {
       this.tui.requestRender();
       return;
     }
-    if (this.keybindings.matches(data, "tui.input.submit") || data === "\n" || data === "\r") return this.done(this.value.join(""));
+    if (this.keybindings.matches(data, "tui.input.submit") || data === "\n" || data === "\r")
+      return this.done(this.value.join(""));
     if (this.keybindings.matches(data, "tui.select.cancel")) return this.cancel();
-    if (this.keybindings.matches(data, "tui.editor.deleteCharBackward")) return this.deleteBackward();
+    if (this.keybindings.matches(data, "tui.editor.deleteCharBackward"))
+      return this.deleteBackward();
     if (this.keybindings.matches(data, "tui.editor.deleteCharForward")) return this.deleteForward();
     if (this.keybindings.matches(data, "tui.editor.cursorLeft")) return this.moveCursor(-1);
     if (this.keybindings.matches(data, "tui.editor.cursorRight")) return this.moveCursor(1);
     if (this.keybindings.matches(data, "tui.editor.cursorLineStart")) return this.setCursor(0);
-    if (this.keybindings.matches(data, "tui.editor.cursorLineEnd")) return this.setCursor(this.value.length);
+    if (this.keybindings.matches(data, "tui.editor.cursorLineEnd"))
+      return this.setCursor(this.value.length);
     if (!hasControlChars(data)) {
       this.insertText(data);
       this.tui.requestRender();
@@ -74,9 +83,15 @@ class MaskedSecretInput {
   render(width: number): string[] {
     const prompt = "> ";
     const available = Math.max(1, width - prompt.length);
-    const start = Math.max(0, Math.min(this.cursor - Math.floor(available / 2), this.value.length - available + 1));
+    const start = Math.max(
+      0,
+      Math.min(this.cursor - Math.floor(available / 2), this.value.length - available + 1),
+    );
     const cursorInView = this.cursor - start;
-    const visibleLength = Math.min(this.value.length - start, available - (this.cursor === this.value.length ? 1 : 0));
+    const visibleLength = Math.min(
+      this.value.length - start,
+      available - (this.cursor === this.value.length ? 1 : 0),
+    );
     const mask = "*".repeat(Math.max(0, visibleLength));
     const beforeCursor = mask.slice(0, cursorInView);
     const atCursor = cursorInView < mask.length ? mask[cursorInView] : " ";
@@ -84,7 +99,13 @@ class MaskedSecretInput {
     return [
       truncate(this.theme.fg("accent", this.theme.bold(titleWithoutPath(this.title))), width),
       truncate(`${prompt}${beforeCursor}\x1b[7m${atCursor}\x1b[27m${afterCursor}`, width),
-      truncate(this.theme.fg("dim", "Enter submit • Esc/Ctrl+C cancel • secret is not sent to chat history"), width),
+      truncate(
+        this.theme.fg(
+          "dim",
+          "Enter submit • Esc/Ctrl+C cancel • secret is not sent to chat history",
+        ),
+        width,
+      ),
     ];
   }
 
@@ -137,7 +158,11 @@ class MaskedSecretInput {
 
 /** Split text into grapheme clusters for secret-input editing. */
 function graphemes(text: string): string[] {
-  if (typeof Intl.Segmenter === "function") return Array.from(new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text), (segment) => segment.segment);
+  if (typeof Intl.Segmenter === "function")
+    return Array.from(
+      new Intl.Segmenter(undefined, { granularity: "grapheme" }).segment(text),
+      (segment) => segment.segment,
+    );
   return Array.from(text);
 }
 

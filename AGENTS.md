@@ -7,6 +7,7 @@
 **Don't assume. Don't hide confusion. Surface tradeoffs.**
 
 Before implementing:
+
 - State assumptions explicitly. If uncertain, ask.
 - If multiple interpretations exist, present them; do not pick silently.
 - If a simpler approach exists, say so. Push back when warranted.
@@ -30,6 +31,7 @@ Ask: "Would a senior engineer say this is overcomplicated?" If yes, simplify.
 **Touch only what you must. Clean up only your own mess.**
 
 When editing existing code:
+
 - Do not improve adjacent code, comments, or formatting.
 - Do not refactor things that are not broken.
 - Match existing style, even if you would do it differently.
@@ -44,6 +46,7 @@ The test: every changed line should trace directly to the user's request.
 **Define success criteria. Loop until verified.**
 
 Transform tasks into verifiable goals:
+
 - "Add validation" -> "Write tests for invalid inputs, then make them pass."
 - "Fix the bug" -> "Write a test or smoke check that reproduces it, then make it pass."
 - "Refactor X" -> "Run the relevant validation before and after."
@@ -74,6 +77,7 @@ This repo is primarily TypeScript plus Markdown and JSON package resources.
 **Prefer repeatable hooks and scripts over manual memory.**
 
 Current runnable checks:
+
 - `npm run validate:json` validates `package.json` and theme JSON files.
 - `npm run pack:dry-run` verifies the package contents npm would publish.
 
