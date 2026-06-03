@@ -8,6 +8,16 @@ import { createProxyState, type ProxyState, type RegisterProxyOptions } from "./
 export type { RegisterProxyOptions } from "./types.ts";
 export { resolveProxyClientTls } from "./tls.ts";
 
+/** On-demand proxy readiness hook shared with nested-session callers. */
+export interface ProxyReadinessHandle {
+  /** Ensure the proxy server is listening and provider overrides are applied for the current context. */
+  ensure(ctx: ExtensionContext): Promise<void>;
+  /** Return whether the proxy server currently has a listening loopback route table. */
+  isActive(): boolean;
+  /** Return whether a provider currently has a proxy route. */
+  isProviderProxied(provider: string): boolean;
+}
+
 const PROXY_MEMORY_KEY = "__pooPiCoreProxyState";
 
 /**
@@ -32,7 +42,10 @@ function getProxyState(): ProxyState {
  * are skipped entirely when it fails to start so providers are never stranded
  * pointing at a dead `127.0.0.1`.
  */
-export function registerProxy(pi: ExtensionAPI, options: RegisterProxyOptions): void {
+export function registerProxy(
+  pi: ExtensionAPI,
+  options: RegisterProxyOptions,
+): ProxyReadinessHandle {
   const state = getProxyState();
   const { tlsProvider } = options;
 
@@ -47,4 +60,10 @@ export function registerProxy(pi: ExtensionAPI, options: RegisterProxyOptions): 
   pi.on("session_shutdown", () => stopProxyServer(state));
 
   registerProxyAuditCommand(pi, state);
+  return {
+    ensure,
+    isActive: () => state.port !== undefined,
+    isProviderProxied: (provider) =>
+      [...state.routes.values()].some((route) => route.provider === provider),
+  };
 }

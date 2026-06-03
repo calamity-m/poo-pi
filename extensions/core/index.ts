@@ -16,10 +16,10 @@ export default function core(pi: ExtensionAPI) {
   const tls = registerTls(pi);
   registerClear(pi);
   registerModels(pi);
-  registerSubagents(pi);
   // TLS resolves during session_start; the proxy reads it lazily per request and attaches the
   // client cert when loaded, forwarding without it otherwise (never blocks traffic).
-  registerProxy(pi, { tlsProvider: tls });
+  const proxy = registerProxy(pi, { tlsProvider: tls });
+  registerSubagents(pi, { proxy });
   const permissions = registerPermissions(pi);
   registerCoreSettings(pi, { permissions, tls });
   registerWebsearch(pi, { tlsProvider: tls });

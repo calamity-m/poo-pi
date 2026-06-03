@@ -13,7 +13,7 @@ import type {
 import type { SourceTarget } from "../extensions/tls/types.ts";
 import { createDefaultCoreSettings } from "./defaults.ts";
 import { coreSettingsPath, cwdFromProxyAuditDir } from "./paths.ts";
-import type { CoreSettings } from "./types.ts";
+import type { CoreSettings, CoreSubagentSettings } from "./types.ts";
 
 /** Read unified core settings from `.pi/core-settings.json`, returning defaults when absent or malformed. */
 export async function readCoreSettings(cwd: string): Promise<CoreSettings> {
@@ -99,6 +99,23 @@ export async function writeCoreProxyRedactionMode(
   await writeCoreSettings(cwd, settings);
 }
 
+/** Read subagent tier settings from unified core settings. */
+export async function readCoreSubagentSettings(
+  cwd: string,
+): Promise<CoreSubagentSettings | undefined> {
+  return (await readCoreSettings(cwd)).subagents;
+}
+
+/** Persist subagent tier settings without disturbing other core settings sections. */
+export async function writeCoreSubagentSettings(
+  cwd: string,
+  subagents: CoreSubagentSettings,
+): Promise<void> {
+  const settings = await readCoreSettings(cwd);
+  settings.subagents = subagents;
+  await writeCoreSettings(cwd, settings);
+}
+
 /** Validate an unknown JSON value for user edits and return normalized core settings. */
 export function validateCoreSettings(value: unknown): CoreSettings | string {
   if (!isRecord(value)) return "config must be a JSON object";
@@ -108,6 +125,8 @@ export function validateCoreSettings(value: unknown): CoreSettings | string {
   if (tlsError) return tlsError;
   const proxyError = validateProxySection(value["proxy"]);
   if (proxyError) return proxyError;
+  const subagentsError = validateSubagentSection(value["subagents"]);
+  if (subagentsError) return subagentsError;
   return parseCoreSettings(value) ?? createDefaultCoreSettings();
 }
 
@@ -125,6 +144,9 @@ export function parseCoreSettings(value: unknown): CoreSettings | undefined {
 
   const proxy = parseProxySettings(raw["proxy"]);
   if (proxy) out.proxy = proxy;
+
+  const subagents = parseSubagentSettings(raw["subagents"]);
+  if (subagents) out.subagents = subagents;
 
   return out;
 }
@@ -173,6 +195,25 @@ function validateProxySection(value: unknown): string | undefined {
   const redact = audit["redact"];
   if (redact !== undefined && redact !== "on" && redact !== "off")
     return '"proxy.audit.redact" must be "on" or "off"';
+  return undefined;
+}
+
+/** Validate the subagents section when present in edited core settings. */
+export function validateSubagentSection(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return '"subagents" must be an object';
+  for (const tier of Object.keys(value)) {
+    if (tier !== "fast" && tier !== "high") return `"subagents.${tier}" is not supported`;
+    const mapping = value[tier];
+    if (!isRecord(mapping)) return `"subagents.${tier}" must be an object`;
+    if (!isCanonicalModelId(mapping["model"])) {
+      return `"subagents.${tier}.model" must be a canonical provider/model-id string`;
+    }
+    const thinkingLevel = mapping["thinkingLevel"];
+    if (thinkingLevel !== undefined && !isThinkingLevel(thinkingLevel)) {
+      return `"subagents.${tier}.thinkingLevel" must be one of off, minimal, low, medium, high, or xhigh`;
+    }
+  }
   return undefined;
 }
 
@@ -252,6 +293,42 @@ function parseProxySettings(value: unknown): CoreSettings["proxy"] | undefined {
   const redact = value["audit"]["redact"];
   if (redact !== "on" && redact !== "off") return undefined;
   return { audit: { redact } };
+}
+
+/** Parse the subagents section, retaining only valid fast/high mappings. */
+function parseSubagentSettings(value: unknown): CoreSubagentSettings | undefined {
+  if (!isRecord(value)) return undefined;
+  const out: CoreSubagentSettings = {};
+  for (const tier of ["fast", "high"] as const) {
+    const mapping = value[tier];
+    if (!isRecord(mapping) || !isCanonicalModelId(mapping["model"])) continue;
+    out[tier] = {
+      model: mapping["model"],
+      ...(isThinkingLevel(mapping["thinkingLevel"])
+        ? { thinkingLevel: mapping["thinkingLevel"] }
+        : {}),
+    };
+  }
+  return out.fast || out.high ? out : undefined;
+}
+
+/** Return whether a value is a canonical provider/model-id string. */
+function isCanonicalModelId(value: unknown): value is string {
+  return typeof value === "string" && /^[^/\s]+\/\S+$/.test(value);
+}
+
+/** Return whether a value is a supported Pi thinking level. */
+function isThinkingLevel(
+  value: unknown,
+): value is NonNullable<CoreSubagentSettings["fast"]>["thinkingLevel"] {
+  return (
+    value === "off" ||
+    value === "minimal" ||
+    value === "low" ||
+    value === "medium" ||
+    value === "high" ||
+    value === "xhigh"
+  );
 }
 
 /** Return whether a value is a known permission mode. */

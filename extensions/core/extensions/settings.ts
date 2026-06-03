@@ -7,9 +7,11 @@ import {
   readCoreClientTlsSkip,
   readCoreProxyRedactionMode,
   readCoreSettings,
+  readCoreSubagentSettings,
   validateCoreSettings,
   writeCoreClientTlsSkip,
   writeCoreSettings,
+  writeCoreSubagentSettings,
 } from "../config/persistence.ts";
 import type { PermissionsController } from "./permissions/index.ts";
 import type { PermissionMode } from "./permissions/types.ts";
@@ -130,6 +132,7 @@ async function openCoreSettingsSelector(
   for (;;) {
     const redaction = await readCoreProxyRedactionMode(auditPaths(ctx.cwd).dir);
     const tlsSkipped = await readCoreClientTlsSkip(ctx.cwd);
+    const subagents = await readCoreSubagentSettings(ctx.cwd);
 
     const result = await ctx.ui.custom<SelectorResult>((_tui, theme, _kb, done) => {
       const items: SettingItem[] = [
@@ -169,6 +172,20 @@ async function openCoreSettingsSelector(
           currentValue: tlsSkipped ? "on" : "off",
           values: ["on", "off"],
         },
+        actionItem(
+          "subagents-fast",
+          "Subagent fast model",
+          subagents?.fast?.model ?? "unset",
+          "Configure provider/model-id and optional thinking level for fast subagents.",
+          done,
+        ),
+        actionItem(
+          "subagents-high",
+          "Subagent high model",
+          subagents?.high?.model ?? "unset",
+          "Configure provider/model-id and optional thinking level for high-capability subagents.",
+          done,
+        ),
         actionItem(
           "json-edit",
           "Core settings JSON",
@@ -275,7 +292,63 @@ async function runAction(
     await controllers.tls.configure(ctx);
     return;
   }
+  if (id === "subagents-fast" || id === "subagents-high") {
+    await configureSubagentTier(ctx, id === "subagents-fast" ? "fast" : "high");
+    return;
+  }
   if (id === "json-edit") {
     await editSettings(ctx);
   }
+}
+
+/** Prompt for one subagent tier mapping and persist it through the unified settings file. */
+async function configureSubagentTier(
+  ctx: ExtensionCommandContext,
+  tier: "fast" | "high",
+): Promise<void> {
+  const current = await readCoreSubagentSettings(ctx.cwd);
+  const available = [
+    ...new Set(
+      ctx.modelRegistry
+        .getAll()
+        .filter((model) => ctx.modelRegistry.hasConfiguredAuth(model))
+        .map((model) => `${model.provider}/${model.id}`),
+    ),
+  ].sort();
+  if (available.length === 0) {
+    ctx.ui.notify(
+      "[core-settings] no authenticated models available; use /login or /core-settings edit for raw JSON configuration",
+      "warning",
+    );
+    return;
+  }
+
+  const currentModel = current?.[tier]?.model;
+  const selectedModel = await ctx.ui.select(
+    `Subagent ${tier} model${currentModel ? ` (current: ${currentModel})` : ""}`,
+    available,
+  );
+  if (!selectedModel) return;
+
+  const thinkingLevel = await ctx.ui.select(`Subagent ${tier} thinking level`, [
+    "unset",
+    "off",
+    "minimal",
+    "low",
+    "medium",
+    "high",
+    "xhigh",
+  ]);
+  const next = { ...current };
+  next[tier] = {
+    model: selectedModel,
+    ...(thinkingLevel && thinkingLevel !== "unset" ? { thinkingLevel } : {}),
+  };
+  const validated = validateCoreSettings({ version: 1, subagents: next });
+  if (typeof validated === "string") {
+    ctx.ui.notify(`[core-settings] subagent ${tier} rejected — ${validated}`, "error");
+    return;
+  }
+  await writeCoreSubagentSettings(ctx.cwd, next);
+  ctx.ui.notify(`[core-settings] subagent ${tier} updated`, "info");
 }

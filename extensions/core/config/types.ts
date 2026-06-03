@@ -1,5 +1,7 @@
 import type { RedactionMode } from "../extensions/proxy/types.ts";
 import type { PersistedPermissionConfig } from "../extensions/permissions/types.ts";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
+
 import type { SourceTarget } from "../extensions/tls/types.ts";
 
 /** Current version of the project-local core settings file. */
@@ -22,6 +24,22 @@ export interface CoreProxySettings {
   };
 }
 
+/** Persisted model/thinking mapping for one subagent tier. */
+export interface SubagentModelMapping {
+  /** Canonical model id in provider/model-id form. */
+  model: string;
+  /** Optional thinking level to use for this tier. */
+  thinkingLevel?: ThinkingLevel;
+}
+
+/** Subagent model tier settings persisted by core. */
+export interface CoreSubagentSettings {
+  /** Low-latency subagent model mapping. */
+  fast?: SubagentModelMapping;
+  /** Higher-capability subagent model mapping. */
+  high?: SubagentModelMapping;
+}
+
 /** Unified project-local settings for the poo-pi core extension bundle. */
 export interface CoreSettings {
   /** Settings schema version. */
@@ -32,4 +50,6 @@ export interface CoreSettings {
   tls?: CoreTlsSettings;
   /** Provider proxy settings. */
   proxy?: CoreProxySettings;
+  /** Isolated subagent model tier settings. */
+  subagents?: CoreSubagentSettings;
 }
