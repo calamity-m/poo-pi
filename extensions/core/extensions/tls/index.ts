@@ -1,5 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
+import { readCoreClientTlsSkip } from "../../config/persistence.ts";
 import { readPersistedTarget, writePersistedTarget } from "./persistence.ts";
 export { hasPersistedClientTlsConfig } from "./persistence.ts";
 import { createInteractivePassphraseProvider, createPfxFileSource } from "./pfx-source.ts";
@@ -23,6 +24,17 @@ export type {
 const STATUS_KEY = "core-tls";
 const TLS_MEMORY_KEY = "__pooPiCoreTlsMemory";
 
+/**
+ * Live controller over the process-local TLS state, used by `/core-settings` to
+ * launch the secret-safe setup flow and read a redacted status label.
+ */
+export interface ClientTlsController {
+  /** Run the interactive `/tls-setup` flow; no-ops with a notice when `!ctx.hasUI`. */
+  configure(ctx: ExtensionContext): Promise<void>;
+  /** Redacted status word for display: `loaded`, `error`, or `unconfigured`. */
+  statusLabel(): string;
+}
+
 interface ClientTlsMemory {
   /** Memory-only TLS state carried across Pi runtime reloads in the same Node process. */
   state: ClientTlsState;
@@ -35,16 +47,35 @@ function getClientTlsMemory(): ClientTlsMemory {
   return globalScope[TLS_MEMORY_KEY];
 }
 
-/** Register TLS startup resolution and return the lazy-read provider for consumers. */
-export function registerTls(pi: ExtensionAPI): ClientTlsProvider {
+/**
+ * Register TLS startup resolution and return the lazy-read provider for consumers,
+ * extended with a controller `/core-settings` uses to launch setup and read status.
+ */
+export function registerTls(pi: ExtensionAPI): ClientTlsProvider & ClientTlsController {
   const memory = getClientTlsMemory();
   let state: ClientTlsState = memory.state;
   const sources = createSourceRegistry([createPfxFileSource()]);
   const passphrases = [createInteractivePassphraseProvider()];
 
-  const provider: ClientTlsProvider = {
+  /** Run the force setup flow, update same-process state, and refresh the status line. */
+  const configure = async (ctx: ExtensionContext): Promise<void> => {
+    if (!ctx.hasUI) {
+      ctx.ui.notify("tls: interactive setup requires a UI", "warning");
+      return;
+    }
+    ctx.ui.setStatus(STATUS_KEY, "tls: setup");
+    state = await resolveClientTls(ctx, sources, passphrases, { force: true });
+    memory.state = state;
+    const status = redactState(state);
+    ctx.ui.setStatus(STATUS_KEY, formatStatusLine(status));
+    ctx.ui.notify(status.message, state.status === "error" ? "error" : "info");
+  };
+
+  const provider: ClientTlsProvider & ClientTlsController = {
     getClientTls: () => (state.status === "loaded" ? state.tls : undefined),
     getClientTlsStatus: () => redactState(state),
+    configure,
+    statusLabel: () => redactState(state).status,
   };
 
   pi.on("session_start", async (event, ctx) => {
@@ -55,6 +86,14 @@ export function registerTls(pi: ExtensionAPI): ClientTlsProvider {
         STATUS_KEY,
         state.status === "loaded" ? formatStatusLine(redactState(state)) : undefined,
       );
+      return;
+    }
+
+    if (await readCoreClientTlsSkip(ctx.cwd)) {
+      // User opted out: no prompt, no client cert. Persisted target (if any) is kept.
+      state = { status: "unconfigured" };
+      memory.state = state;
+      ctx.ui.setStatus(STATUS_KEY, "tls: skipped");
       return;
     }
 
@@ -70,16 +109,7 @@ export function registerTls(pi: ExtensionAPI): ClientTlsProvider {
   pi.registerCommand("tls-setup", {
     description: "Configure the core mTLS client certificate without exposing certificate secrets",
     handler: async (_args, ctx) => {
-      if (!ctx.hasUI) {
-        ctx.ui.notify("tls: interactive setup requires a UI", "warning");
-        return;
-      }
-      ctx.ui.setStatus(STATUS_KEY, "tls: setup");
-      state = await resolveClientTls(ctx, sources, passphrases, { force: true });
-      memory.state = state;
-      const status = redactState(state);
-      ctx.ui.setStatus(STATUS_KEY, formatStatusLine(status));
-      ctx.ui.notify(status.message, state.status === "error" ? "error" : "info");
+      await configure(ctx);
     },
   });
 

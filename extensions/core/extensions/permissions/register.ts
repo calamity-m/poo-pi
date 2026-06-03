@@ -35,7 +35,7 @@ export function registerPermissionsCommand(pi: ExtensionAPI, state: PermissionSt
       const sub = args.trim();
 
       if (sub === "edit") {
-        await handleEdit(ctx, state);
+        await editPermissionConfig(ctx, state);
         return;
       }
 
@@ -62,9 +62,23 @@ async function applyMode(
   state: PermissionState,
   mode: PermissionMode,
 ): Promise<void> {
+  await applyPermissionMode(ctx, state, mode);
+  await present(ctx, `permissions: mode set to ${mode}`, buildShowcase(state, mode));
+}
+
+/**
+ * Mutate the shared permission state's mode in place and persist it.
+ * Mutating (not replacing) the object keeps the `tool_call` hook closure live.
+ * Shared with `/core-settings` so the settings UI applies modes through the
+ * same path as `/permissions` without rendering the showcase panel.
+ */
+export async function applyPermissionMode(
+  ctx: ExtensionCommandContext,
+  state: PermissionState,
+  mode: PermissionMode,
+): Promise<void> {
   state.mode = mode;
   await writePermissionState(ctx.cwd, state);
-  await present(ctx, `permissions: mode set to ${mode}`, buildShowcase(state, mode));
 }
 
 // ── /permissions edit ────────────────────────────────────────────────────────
@@ -75,8 +89,14 @@ async function applyMode(
  * on invalid input without touching the stored config.
  *
  * Falls back to a notify pointing at the file path when `!ctx.hasUI`.
+ *
+ * Exported so `/core-settings` can open the same validated permissions editor,
+ * applying compiled rules into the shared live state via `writePermissionState`.
  */
-async function handleEdit(ctx: ExtensionCommandContext, state: PermissionState): Promise<void> {
+export async function editPermissionConfig(
+  ctx: ExtensionCommandContext,
+  state: PermissionState,
+): Promise<void> {
   if (!ctx.hasUI) {
     ctx.ui.notify(`edit ${configFilePath(ctx.cwd)} directly to modify permissions config`, "info");
     return;
@@ -92,10 +112,7 @@ async function handleEdit(ctx: ExtensionCommandContext, state: PermissionState):
     2,
   );
 
-  const edited = await ctx.ui.editor(
-    "Edit permissions config (.pi/core-permissions.json)",
-    prefill,
-  );
+  const edited = await ctx.ui.editor("Edit permissions config (.pi/core-settings.json)", prefill);
   if (edited === undefined) return; // cancelled
 
   let parsed: unknown;

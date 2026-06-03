@@ -1,7 +1,7 @@
-import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
-
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
+
+import { readCorePermissionConfig, writeCorePermissionConfig } from "../../config/persistence.ts";
+import { coreSettingsPath } from "../../config/paths.ts";
 
 import type {
   CompiledGrant,
@@ -13,8 +13,6 @@ import type {
   Rule,
 } from "./types.ts";
 
-const CONFIG_PATH = join(".pi", "core-permissions.json");
-
 /** Default state when no config file exists or the file is malformed. */
 const DEFAULTS: PermissionState = {
   mode: "trusted",
@@ -22,36 +20,26 @@ const DEFAULTS: PermissionState = {
   remembered: [],
 };
 
-/** Return the absolute path to the project-local permissions config file. */
+/** Return the absolute path to the project-local core settings config file. */
 export function configFilePath(cwd: string): string {
-  return join(cwd, CONFIG_PATH);
+  return coreSettingsPath(cwd);
 }
 
 /**
- * Read `.pi/core-permissions.json` and return compiled in-memory state.
- * Falls back to defaults on absence or malformed JSON; invalid regex patterns
- * are dropped with a console warning rather than crashing.
+ * Read permissions from `.pi/core-settings.json` and return compiled in-memory state.
+ * Invalid regex patterns are dropped with a console warning rather than crashing.
  */
 export async function readPermissionState(cwd: string): Promise<PermissionState> {
-  try {
-    const raw = await readFile(configFilePath(cwd), "utf8");
-    const parsed: unknown = JSON.parse(raw);
-    return parseAndCompile(parsed);
-  } catch {
-    // Absent or malformed → defaults
-    return { ...DEFAULTS, rules: [], remembered: [] };
-  }
+  const config = await readCorePermissionConfig(cwd);
+  return config ? parseAndCompile(config) : { ...DEFAULTS, rules: [], remembered: [] };
 }
 
 /**
- * Persist the current permission state to `.pi/core-permissions.json`.
- * Creates `.pi/` if absent. Written with mode 0o600 (owner-read-only).
+ * Persist the current permission state into `.pi/core-settings.json`.
  * Only serializes the raw `mode`, `rules`, and `remembered` arrays
  * (not the compiled regexes).
  */
 export async function writePermissionState(cwd: string, state: PermissionState): Promise<void> {
-  const file = configFilePath(cwd);
-  await mkdir(dirname(file), { recursive: true });
   const config: PersistedPermissionConfig = {
     mode: state.mode,
     rules: state.rules.map((r) => ({ tool: r.tool, action: r.action, pattern: r.pattern })),
@@ -62,7 +50,7 @@ export async function writePermissionState(cwd: string, state: PermissionState):
       return out;
     }),
   };
-  await writeFile(file, `${JSON.stringify(config, null, 2)}\n`, { mode: 0o600 });
+  await writeCorePermissionConfig(cwd, config);
 }
 
 /**

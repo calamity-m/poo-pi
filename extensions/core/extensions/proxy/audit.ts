@@ -2,6 +2,10 @@ import type { OutgoingHttpHeaders } from "node:http";
 import { appendFile, mkdir, open, readdir, rename, writeFile } from "node:fs/promises";
 import { join } from "node:path";
 
+import {
+  readCoreProxyRedactionMode,
+  writeCoreProxyRedactionMode,
+} from "../../config/persistence.ts";
 import type { AuditRecord, AuditResponse, ProxyState, RedactionMode } from "./types.ts";
 
 /** Maximum audited body size in bytes; larger request bodies are truncated, not written whole. */
@@ -31,8 +35,6 @@ export interface AuditPaths {
   requestsDir: string;
   /** Append-only index of one JSON line per request. */
   indexPath: string;
-  /** Persisted redaction-switch config. */
-  configPath: string;
 }
 
 /** Compute the audit store paths for a working directory. */
@@ -42,7 +44,6 @@ export function auditPaths(cwd: string): AuditPaths {
     dir,
     requestsDir: join(dir, "requests"),
     indexPath: join(dir, "index.jsonl"),
-    configPath: join(dir, "config.json"),
   };
 }
 
@@ -65,22 +66,12 @@ export async function ensureAuditStore(cwd: string): Promise<{ dir: string; seq:
 
 /** Read the redaction mode fresh per request so a `/proxy-audit redact` flip takes effect live; defaults to `on`. */
 export async function readRedactionMode(auditDir: string): Promise<RedactionMode> {
-  try {
-    const parsed = JSON.parse(await readText(auditPathsForDir(auditDir).configPath));
-    return parsed?.redact === "off" ? "off" : "on";
-  } catch {
-    return "on";
-  }
+  return readCoreProxyRedactionMode(auditDir);
 }
 
-/** Persist the redaction mode for subsequent requests. */
+/** Persist the redaction mode for subsequent requests in unified core settings. */
 export async function writeRedactionMode(auditDir: string, mode: RedactionMode): Promise<void> {
-  await mkdir(auditDir, { recursive: true });
-  await writeFile(
-    auditPathsForDir(auditDir).configPath,
-    `${JSON.stringify({ redact: mode }, null, 2)}\n`,
-    { mode: 0o600 },
-  );
+  await writeCoreProxyRedactionMode(auditDir, mode);
 }
 
 /** Inputs for building one audit record from a forwarded request and its outcome. */
@@ -189,7 +180,6 @@ function auditPathsForDir(dir: string): AuditPaths {
     dir,
     requestsDir: join(dir, "requests"),
     indexPath: join(dir, "index.jsonl"),
-    configPath: join(dir, "config.json"),
   };
 }
 
@@ -233,16 +223,6 @@ function sanitize(value: string): string {
 function pushBounded<T>(ring: T[], value: T, limit: number): void {
   ring.push(value);
   if (ring.length > limit) ring.splice(0, ring.length - limit);
-}
-
-/** Read a file as UTF-8 text. */
-async function readText(path: string): Promise<string> {
-  const handle = await open(path, "r");
-  try {
-    return (await handle.readFile()).toString("utf8");
-  } finally {
-    await handle.close();
-  }
 }
 
 /** Read the trailing `maxBytes` of a file and return its complete lines. */

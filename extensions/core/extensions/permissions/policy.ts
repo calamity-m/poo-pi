@@ -173,7 +173,7 @@ function grantCovers(grant: CompiledGrant, toolName: string, target: ResolvedTar
  * The caller is responsible for converting `!hasUI` → `"open"` before calling.
  *
  * @param mode - Effective permission mode.
- * @param rules - Compiled config rules from `.pi/core-permissions.json`.
+ * @param rules - Compiled config rules from `.pi/core-settings.json`.
  * @param remembered - Compiled "Always For This Project" grants.
  * @param toolName - Name of the tool being invoked.
  * @param target - Pre-normalized resolved target.

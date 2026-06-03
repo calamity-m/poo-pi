@@ -7,7 +7,7 @@ export type RuleAction = "allow" | "ask" | "deny";
 /** Decision outcome from the policy engine. */
 export type Decision = "allow" | "ask" | "deny";
 
-/** A human-authored config rule stored in `.pi/core-permissions.json`. */
+/** A human-authored config rule stored in `.pi/core-settings.json`. */
 export interface Rule {
   /** Tool name or `"*"` to match all tools. */
   tool: string;
@@ -29,7 +29,7 @@ export interface RememberedGrant {
   pattern?: string;
 }
 
-/** On-disk shape for `.pi/core-permissions.json`. */
+/** Permissions section shape inside `.pi/core-settings.json`. */
 export interface PersistedPermissionConfig {
   mode: PermissionMode;
   rules: Rule[];
