@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { showPanel } from "../proxy/audit-panel.ts";
+import { showInlinePanel } from "../proxy/audit-panel.ts";
 import {
   SAFE_ALLOW_TOOLS,
   TRUSTED_BASH_ALLOW_PATTERNS,
@@ -64,7 +64,7 @@ async function applyMode(
 ): Promise<void> {
   state.mode = mode;
   await writePermissionState(ctx.cwd, state);
-  await present(ctx, `permissions: mode set to ${mode}`, buildShowcase(state));
+  await present(ctx, `permissions: mode set to ${mode}`, buildShowcase(state, mode));
 }
 
 // ── /permissions edit ────────────────────────────────────────────────────────
@@ -126,72 +126,97 @@ async function handleEdit(ctx: ExtensionCommandContext, state: PermissionState):
 // ── Showcase ─────────────────────────────────────────────────────────────────
 
 /**
- * Build the showcase panel lines from the policy engine's own constants.
+ * Build the selected mode's showcase lines from the policy engine constants.
  * Content is derived, not hand-written, to prevent drift from actual enforcement.
  */
-function buildShowcase(state: PermissionState): string[] {
+function buildShowcase(state: PermissionState, mode: PermissionMode): string[] {
   const lines: string[] = [];
 
-  lines.push(`Active mode: ${state.mode}`);
+  lines.push(`Active mode: ${mode}`);
   lines.push("");
 
-  lines.push("── safe mode ─────────────────────────────────────────────");
-  lines.push(" precedence: .env-deny → config deny → config ask → config allow/grant → default");
-  lines.push(` allows:  ${[...SAFE_ALLOW_TOOLS].join(", ")}`);
-  lines.push(" prompts: write, edit, bash, and any other tool");
-  lines.push(" blocks:  (nothing extra beyond .env)");
-  lines.push("");
+  appendModeShowcase(lines, mode);
+  appendCommonNotes(lines, mode);
+  appendActiveConfig(lines, state);
 
-  lines.push("── trusted mode ──────────────────────────────────────────");
-  lines.push(" precedence: .env-deny → config deny → config ask → config allow/grant → default");
-  lines.push(" allows:  path tools (read/write/edit/grep/find/ls) within cwd");
-  lines.push(" allows bash (all segments must match):");
-  for (const p of TRUSTED_BASH_ALLOW_PATTERNS) {
-    lines.push(`   ${p.source}`);
+  return lines;
+}
+
+/** Append the mode-specific summary for the selected permission mode. */
+function appendModeShowcase(lines: string[], mode: PermissionMode): void {
+  if (mode === "safe") {
+    lines.push("── safe mode ─────────────────────────────────────────────");
+    lines.push(" precedence: .env-deny → config deny → config ask → config allow/grant → default");
+    lines.push(` allows:  ${[...SAFE_ALLOW_TOOLS].join(", ")}`);
+    lines.push(" prompts: write, edit, bash, and any other tool");
+    lines.push(" blocks:  nothing extra beyond .env direct targets");
+    lines.push("");
+    return;
   }
-  lines.push(" denies bash (any segment or whole command; override-able by config allow):");
-  for (const p of TRUSTED_BASH_DENY_PATTERNS) {
-    lines.push(`   ${p.source}`);
-  }
-  lines.push(" prompts: path tools outside cwd, unrecognized bash, custom tools");
-  lines.push("");
 
-  lines.push("── permissive mode ───────────────────────────────────────");
-  lines.push(" precedence: .env-deny → config deny → config allow/grant → config ask → allow");
-  lines.push(" allows:  everything by default; honors config rules");
-  lines.push(" ask:     add config ask rules to prompt for specific commands/tools");
-  lines.push("   grants (Always For This Project) override the ask-list");
-  lines.push("   allow rules also override the ask-list");
-  lines.push(" blocks:  .env (path and bash) same as open; config deny rules");
-  lines.push(" note:    ships with no built-in ask patterns — fresh permissive ≡ open");
-  lines.push("   until you add ask rules via /permissions edit");
-  lines.push("");
+  if (mode === "trusted") {
+    lines.push("── trusted mode ──────────────────────────────────────────");
+    lines.push(" precedence: .env-deny → config deny → config ask → config allow/grant → default");
+    lines.push(" allows:  path tools (read/write/edit/grep/find/ls) within cwd");
+    lines.push(" allows bash (all segments must match):");
+    for (const p of TRUSTED_BASH_ALLOW_PATTERNS) {
+      lines.push(`   ${p.source}`);
+    }
+    lines.push(" denies bash (any segment or whole command; override-able by config allow):");
+    for (const p of TRUSTED_BASH_DENY_PATTERNS) {
+      lines.push(`   ${p.source}`);
+    }
+    lines.push(" prompts: path tools outside cwd, unrecognized bash, custom tools");
+    lines.push("");
+    return;
+  }
+
+  if (mode === "permissive") {
+    lines.push("── permissive mode ───────────────────────────────────────");
+    lines.push(" precedence: .env-deny → config deny → config allow/grant → config ask → allow");
+    lines.push(" allows:  everything by default; honors config rules");
+    lines.push(" ask:     add config ask rules to prompt for specific commands/tools");
+    lines.push("   grants (Always For This Project) override the ask-list");
+    lines.push("   allow rules also override the ask-list");
+    lines.push(" blocks:  .env path/bash targets; config deny rules");
+    lines.push(" note:    ships with no built-in ask patterns — fresh permissive allows");
+    lines.push("   everything except .env targets until you add ask rules");
+    lines.push("");
+    return;
+  }
 
   lines.push("── open mode ─────────────────────────────────────────────");
   lines.push(" allows:  everything (config rules ignored)");
-  lines.push(" blocks:  .env direct path-tool access (see below)");
+  lines.push(" blocks:  .env path/bash targets without an explicit allow rule");
   lines.push("");
+}
 
-  lines.push("── compound bash commands (all modes) ────────────────────");
-  lines.push(" commands are split into segments (&&, ||, |, ;, newline, &)");
-  lines.push(" ALLOW: every segment must be covered — one uncovered segment → ask");
-  lines.push(" ASK:   any segment matching an ask rule → prompt");
-  lines.push(" DENY:  any segment matching a deny rule, OR the whole command");
-  lines.push("   (whole-command match preserves pipe-spanning patterns like curl|bash)");
-  lines.push(" command substitution ($(...) or backticks) → always uncoverable → ask/deny");
-  lines.push(" backward-compat note: saved patterns that matched a whole compound string");
-  lines.push("   now match per-segment; anchored single-command patterns are unaffected");
-  lines.push("");
+/** Append notes that apply to the selected mode without listing other modes. */
+function appendCommonNotes(lines: string[], mode: PermissionMode): void {
+  if (mode !== "open") {
+    lines.push("── compound bash commands ────────────────────────────────");
+    lines.push(" commands are split into segments (&&, ||, |, ;, newline, &)");
+    lines.push(" ALLOW: every segment must be covered — one uncovered segment → ask");
+    lines.push(" ASK:   any segment matching an ask rule → prompt");
+    lines.push(" DENY:  any segment matching a deny rule, OR the whole command");
+    lines.push(" command substitution ($(...) or backticks) → always uncoverable → ask/deny");
+    lines.push("");
+  }
 
-  lines.push("── always active (all modes) ──────────────────────────────");
+  lines.push("── always active ─────────────────────────────────────────");
   lines.push(" .env default-deny: direct .env path-tool targets are blocked");
+  if (mode === "open" || mode === "permissive") {
+    lines.push("   simple bash reads like `cat .env` are blocked too");
+  }
   lines.push("   override: add an explicit config allow rule (e.g. \\.env\\.example$)");
   lines.push("   note: directory scans (grep/find over a parent dir) are NOT");
   lines.push("         recursively checked — nested .env files may still surface");
-  lines.push(" headless (!hasUI): always runs as open mode regardless of persisted mode");
-  lines.push("   write/bash/etc. are NOT gated in headless/automated sessions");
+  lines.push(" headless (!hasUI): write/bash/etc. are not gated in automated sessions");
   lines.push("");
+}
 
+/** Append active config and remembered grants relevant to this project. */
+function appendActiveConfig(lines: string[], state: PermissionState): void {
   lines.push("── active config ─────────────────────────────────────────");
   lines.push(` config rules:      ${state.rules.length}`);
   lines.push(` remembered grants: ${state.remembered.length}`);
@@ -210,18 +235,16 @@ function buildShowcase(state: PermissionState): string[] {
       lines.push(`   ${g.tool.padEnd(8)} ${detail}`);
     }
   }
-
-  return lines;
 }
 
-/** Show lines in a TUI panel when UI is present; otherwise notify. */
+/** Show lines in an inline TUI panel when UI is present; otherwise notify. */
 async function present(
   ctx: ExtensionCommandContext,
   title: string,
   lines: string[],
 ): Promise<void> {
   if (ctx.hasUI) {
-    await showPanel(ctx, title, lines);
+    await showInlinePanel(ctx, title, lines);
     return;
   }
   ctx.ui.notify(`${title}\n${lines.join("\n")}`, "info");
