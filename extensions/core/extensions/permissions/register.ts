@@ -15,13 +15,13 @@ import {
 } from "./persistence.ts";
 import type { PermissionMode, PermissionState } from "./types.ts";
 
-const MODES: PermissionMode[] = ["safe", "trusted", "open", "permissive"];
+const MODES: PermissionMode[] = ["safe", "trusted", "permissive", "open"];
 
 /**
- * Register the `/permissions [safe|trusted|open|edit]` operator command.
+ * Register the `/permissions [safe|trusted|permissive|open|edit]` operator command.
  *
  * - No args / unknown arg: open mode picker then show showcase.
- * - `safe`, `trusted`, `open`: set mode directly and show showcase.
+ * - `safe`, `trusted`, `permissive`, `open`: set mode directly and show showcase.
  * - `edit`: open raw-JSON editor; validate before writing.
  *
  * The showcase content is derived from the policy engine's own constants so it
@@ -30,7 +30,7 @@ const MODES: PermissionMode[] = ["safe", "trusted", "open", "permissive"];
 export function registerPermissionsCommand(pi: ExtensionAPI, state: PermissionState): void {
   pi.registerCommand("permissions", {
     description:
-      "View or change the permission mode (safe / trusted / open / permissive) and inspect active rules",
+      "View or change the permission mode (safe / trusted / permissive / open) and inspect active rules",
     handler: async (args, ctx) => {
       const sub = args.trim();
 
@@ -156,11 +156,6 @@ function buildShowcase(state: PermissionState): string[] {
   lines.push(" prompts: path tools outside cwd, unrecognized bash, custom tools");
   lines.push("");
 
-  lines.push("── open mode ─────────────────────────────────────────────");
-  lines.push(" allows:  everything (config rules ignored)");
-  lines.push(" blocks:  .env direct path-tool access (see below)");
-  lines.push("");
-
   lines.push("── permissive mode ───────────────────────────────────────");
   lines.push(" precedence: .env-deny → config deny → config allow/grant → config ask → allow");
   lines.push(" allows:  everything by default; honors config rules");
@@ -170,6 +165,11 @@ function buildShowcase(state: PermissionState): string[] {
   lines.push(" blocks:  .env (path and bash) same as open; config deny rules");
   lines.push(" note:    ships with no built-in ask patterns — fresh permissive ≡ open");
   lines.push("   until you add ask rules via /permissions edit");
+  lines.push("");
+
+  lines.push("── open mode ─────────────────────────────────────────────");
+  lines.push(" allows:  everything (config rules ignored)");
+  lines.push(" blocks:  .env direct path-tool access (see below)");
   lines.push("");
 
   lines.push("── compound bash commands (all modes) ────────────────────");
