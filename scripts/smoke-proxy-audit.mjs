@@ -17,7 +17,12 @@ import { join } from "node:path";
 
 import { createProxyState } from "../extensions/core/extensions/proxy/types.ts";
 import { startProxyServer, stopProxyServer } from "../extensions/core/extensions/proxy/server.ts";
-import { readRecentTail, writeRedactionMode } from "../extensions/core/extensions/proxy/audit.ts";
+import {
+  auditPaths,
+  readRecentTail,
+  writeRedactionMode,
+} from "../extensions/core/extensions/proxy/audit.ts";
+import { readCoreProxyRedactionMode } from "../extensions/core/config/persistence.ts";
 
 const unloadedTls = {
   getClientTls: () => undefined,
@@ -71,6 +76,15 @@ try {
   assert(
     recordOff.request.headers.authorization === "secret-key",
     "authorization not logged raw when redaction off",
+  );
+
+  // The /core-settings UI flips redaction through a cwd-derived audit dir (no proxy
+  // state needed), persisting to core-settings.json and reading back the same way.
+  const cwdAuditDir = auditPaths(cwd).dir;
+  await writeRedactionMode(cwdAuditDir, "on");
+  assert(
+    (await readCoreProxyRedactionMode(cwdAuditDir)) === "on",
+    "cwd-derived redaction write did not round-trip",
   );
 
   console.log("proxy audit ok");

@@ -1,8 +1,14 @@
 #!/usr/bin/env node
-import { readFileSync } from "node:fs";
+import { mkdtempSync, readFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { createSecureContext } from "node:tls";
 import { resolveProxyClientTls } from "../extensions/core/extensions/proxy/index.ts";
+import {
+  readCoreClientTlsSkip,
+  validateCoreSettings,
+  writeCoreClientTlsSkip,
+} from "../extensions/core/config/persistence.ts";
 import { requireWebsearchClientTls } from "../extensions/core/extensions/websearch.ts";
 
 const unloadedProvider = {
@@ -48,5 +54,19 @@ if (!websearchLoaded.ok || !websearchLoaded.tls.secureContext)
 
 const proxyLoaded = resolveProxyClientTls(loadedProvider);
 if (!proxyLoaded?.secureContext) throw new Error("proxy did not read loaded TLS");
+
+// tls.skip config flag round-trips, and validation rejects a non-boolean skip.
+const skipCwd = mkdtempSync(join(tmpdir(), "poo-pi-tls-skip-"));
+try {
+  if ((await readCoreClientTlsSkip(skipCwd)) !== false)
+    throw new Error("default tls.skip should be false");
+  await writeCoreClientTlsSkip(skipCwd, true);
+  if ((await readCoreClientTlsSkip(skipCwd)) !== true)
+    throw new Error("tls.skip did not round-trip");
+  if (typeof validateCoreSettings({ version: 1, tls: { skip: "yes" } }) !== "string")
+    throw new Error("validateCoreSettings should reject non-boolean tls.skip");
+} finally {
+  rmSync(skipCwd, { recursive: true, force: true });
+}
 
 console.log("tls consumers ok");

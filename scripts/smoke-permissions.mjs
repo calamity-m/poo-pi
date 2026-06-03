@@ -421,8 +421,7 @@ console.log("\n6. persistence (read/write/compile)");
 
 {
   const tmpDir = mkdtempSync(join(tmpdir(), "poo-pi-permissions-"));
-  const piDir = join(tmpDir, ".pi");
-  mkdirSync(piDir);
+  mkdirSync(join(tmpDir, ".pi"));
 
   try {
     // Read non-existent → defaults
@@ -447,10 +446,10 @@ console.log("\n6. persistence (read/write/compile)");
     assertEqual(read.remembered.length, 1, "persisted grant round-trips");
     assertEqual(read.remembered[0].dirPrefix, "/project/src", "persisted grant dirPrefix");
 
-    // Malformed JSON → defaults
-    writeFileSync(join(piDir, "core-permissions.json"), "{ bad json");
+    // Malformed unified JSON → defaults
+    writeFileSync(join(tmpDir, ".pi", "core-settings.json"), "{ bad json");
     const fallback = await readPermissionState(tmpDir);
-    assertEqual(fallback.mode, "trusted", "malformed JSON → default mode");
+    assertEqual(fallback.mode, "trusted", "malformed core settings JSON → default mode");
 
     // Invalid regex in rule → dropped with warning
     const withBadRegex = parseAndCompile({
