@@ -12,9 +12,9 @@ const PROXY_MEMORY_KEY = "__pooPiCoreProxyState";
 
 /**
  * Return the process-local proxy state, reused across Pi runtime reloads in the
- * same Node process. Persisting it keeps the ephemeral server bound and the
- * route map intact across `/reload` and `/new`, so re-registration recovers
- * already-proxied base URLs instead of double-wrapping them into dead routes.
+ * same Node process. Persisting the route map lets re-registration recover
+ * already-proxied base URLs across `/reload` and `/new` instead of
+ * double-wrapping them into dead routes after the ephemeral server restarts.
  */
 function getProxyState(): ProxyState {
   const scope = globalThis as typeof globalThis & { [PROXY_MEMORY_KEY]?: ProxyState };

@@ -14,6 +14,18 @@ export function localProxyPrefix(port: number): string {
   return `http://127.0.0.1:${port}/p/`;
 }
 
+/** Return the route id from one of this extension's loopback proxy URLs, including stale ports after `/reload`. */
+function localProxyRouteId(baseUrl: string): string | undefined {
+  try {
+    const parsed = new URL(baseUrl);
+    if (parsed.protocol !== "http:" || parsed.hostname !== "127.0.0.1") return undefined;
+    const [, prefix, routeId] = parsed.pathname.split("/");
+    return prefix === "p" && routeId ? routeId : undefined;
+  } catch {
+    return undefined;
+  }
+}
+
 /** Derive a URL-safe, stable route id from a provider name. */
 function routeIdFor(provider: string): string {
   return provider.replace(/[^A-Za-z0-9_.-]/g, "-");
@@ -45,21 +57,20 @@ interface ProviderGroup {
  * this is an accepted limitation, documented in the plan and surfaced via status coverage.
  *
  * @param models All models from the registry.
- * @param port The listening proxy port, used to recognize already-proxied base URLs.
+ * @param _port Current listening proxy port, retained for caller clarity; stale-port recovery is route-id based.
  * @param existingRoutes Routes from a prior apply, used to recover upstreams for already-proxied models.
  * @returns The new route map (keyed by route id) and the list of unproxied providers.
  */
 export function buildRoutes(
   models: readonly RegistryModel[],
-  port: number,
+  _port: number,
   existingRoutes: Map<string, ProxyRoute>,
 ): { routes: Map<string, ProxyRoute>; unproxied: UnproxiedProvider[] } {
-  const prefix = localProxyPrefix(port);
   const groups = new Map<string, ProviderGroup>();
 
   for (const model of models) {
     const group = groups.get(model.provider) ?? { upstreams: new Set(), reasons: new Set() };
-    classifyBaseUrl(model.baseUrl, prefix, existingRoutes, group);
+    classifyBaseUrl(model.baseUrl, existingRoutes, group);
     groups.set(model.provider, group);
   }
 
@@ -86,7 +97,6 @@ export function buildRoutes(
 /** Classify one model's base URL into the provider group: a usable upstream, or a disqualification reason. */
 function classifyBaseUrl(
   baseUrl: string,
-  prefix: string,
   existingRoutes: Map<string, ProxyRoute>,
   group: ProviderGroup,
 ): void {
@@ -94,8 +104,8 @@ function classifyBaseUrl(
     group.reasons.add("missing base url");
     return;
   }
-  if (baseUrl.startsWith(prefix)) {
-    const routeId = baseUrl.slice(prefix.length).split("/")[0];
+  const routeId = localProxyRouteId(baseUrl);
+  if (routeId) {
     const original = existingRoutes.get(routeId)?.upstreamBaseUrl;
     if (original) group.upstreams.add(original);
     else group.reasons.add("already proxied to an unknown route");
