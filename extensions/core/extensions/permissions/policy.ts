@@ -1,5 +1,13 @@
 import { sep } from "node:path";
 
+import {
+  allSegmentsCovered,
+  anySegmentMatches,
+  bashGrantCovers,
+  bashRuleMatches,
+  denyMatches,
+  splitBashSegments,
+} from "./bash.ts";
 import type {
   CompiledGrant,
   CompiledRule,
@@ -18,6 +26,7 @@ export const SAFE_ALLOW_TOOLS: ReadonlySet<string> = new Set(["read", "grep", "l
 /**
  * Bash command patterns auto-allowed in `trusted` mode.
  * Checked only after all config rules pass (step 5 mode default).
+ * Applied per-segment: every segment of a compound command must be covered.
  */
 export const TRUSTED_BASH_ALLOW_PATTERNS: readonly RegExp[] = [
   /^ls\b/,
@@ -41,6 +50,9 @@ export const TRUSTED_BASH_ALLOW_PATTERNS: readonly RegExp[] = [
  * Bash command patterns denied in `trusted` mode default.
  * Applied in step 5 (mode default) so config ALLOW rules can override them.
  * Separate from the `.env` path-tool default-deny (step 1).
+ *
+ * DENY semantics: matched against both each segment AND the whole command string.
+ * The whole-command match preserves pipe-spanning patterns (e.g. `curl[^|]*|bash`).
  */
 export const TRUSTED_BASH_DENY_PATTERNS: readonly RegExp[] = [
   /rm\s+-rf/,
@@ -63,7 +75,7 @@ export function isEnvBasename(name: string): boolean {
 /**
  * Return true if the bash command likely accesses a `.env` file.
  * Best-effort; bypassable via obfuscation (`c''at .env`, env vars, etc.).
- * Applies in `open` mode's `.env` check and when mapping bash targets.
+ * Applies in `open` and `permissive` mode `.env` checks and when mapping bash targets.
  */
 export function isBashEnvAccess(command: string): boolean {
   // (?!\S) ensures .env is at the end or followed by whitespace, not .env.example
@@ -89,14 +101,17 @@ function safeTest(regex: RegExp, target: string): boolean {
   }
 }
 
-/** The string form of a target used for rule/grant regex matching. */
+/** The string form of a target used for non-bash rule/grant regex matching. */
 function targetString(target: ResolvedTarget): string {
   if (target.kind === "path") return target.resolvedPath;
   if (target.kind === "bash") return target.command;
   return target.toolName;
 }
 
-/** Return true if any config rule with the given action covers this (tool, target). */
+/**
+ * Return true if any config rule with the given action covers this (tool, target).
+ * Used for non-bash (path/other) targets only.
+ */
 function ruleMatches(
   rules: CompiledRule[],
   action: "allow" | "ask" | "deny",
@@ -128,15 +143,32 @@ function grantCovers(grant: CompiledGrant, toolName: string, target: ResolvedTar
 /**
  * Pure policy decision engine. All inputs must be pre-normalized; no I/O.
  *
- * Precedence (safe/trusted modes):
+ * For bash targets, commands are split into segments once and all matching
+ * (config rules, grants, built-in patterns) uses segment-aware quantifiers:
+ *   - ALLOW requires every segment covered (no unsafe substitution).
+ *   - ASK fires if any segment matches.
+ *   - DENY fires if any segment matches OR the whole command matches
+ *     (the whole-command check preserves pipe-spanning deny patterns like `curl|bash`).
+ *
+ * Precedence by mode:
+ *
+ * **safe / trusted**:
  *   1. .env path target without explicit config allow          → DENY
  *   2. config DENY rule matches                                → DENY
  *   3. config ASK rule matches                                 → ASK
- *   4. config ALLOW rule OR remembered grant matches           → ALLOW
+ *   4. config ALLOW rule OR remembered grant covers all segs   → ALLOW
  *   5. mode default for (tool, target)                        → allow | ask | deny
  *
- * `open` mode short-circuits: allow everything except .env (path or bash) with
- * no explicit config allow rule.
+ * **open**: allow everything except .env (path or bash isEnvAccess) with no
+ * explicit config allow. Config rules are otherwise ignored.
+ *
+ * **permissive**: allow-by-default with config rule honoring. Inverted ask/allow
+ * ordering vs safe/trusted (grants/allow override ask):
+ *   1. .env target (path isEnv or bash isEnvAccess) without explicit config allow → DENY
+ *   2. config DENY rule matches                                → DENY
+ *   3. config ALLOW rule OR remembered grant covers all segs   → ALLOW  ← before ASK
+ *   4. config ASK rule matches                                 → ASK
+ *   5. default                                                 → ALLOW
  *
  * The caller is responsible for converting `!hasUI` → `"open"` before calling.
  *
@@ -157,6 +189,12 @@ export function decide(
 ): Decision {
   const tStr = targetString(target);
 
+  // Split bash segments exactly once and thread through all matchers below.
+  const isBash = target.kind === "bash";
+  const bashCmd = isBash ? target.command : "";
+  const bashSegs = isBash ? splitBashSegments(target.command) : [];
+
+  // ── open mode ────────────────────────────────────────────────────────────────
   if (mode === "open") {
     // open ignores all rules except the .env default-deny
     const isEnvTarget =
@@ -165,35 +203,91 @@ export function decide(
     return "allow";
   }
 
-  // safe | trusted
+  // ── permissive mode ──────────────────────────────────────────────────────────
+  if (mode === "permissive") {
+    // Step 1: .env deny mirrors open (both path isEnv and bash isEnvAccess)
+    const isEnvTarget =
+      (target.kind === "path" && target.isEnv) || (target.kind === "bash" && target.isEnvAccess);
+    if (isEnvTarget) {
+      const hasAllowRule = isBash
+        ? bashRuleMatches(rules, "allow", toolName, bashCmd, bashSegs)
+        : ruleMatches(rules, "allow", toolName, tStr);
+      if (!hasAllowRule) return "deny";
+    }
 
-  // 1. .env path target default-deny (override-able by explicit config allow)
+    // Step 2: config DENY
+    const isDenied = isBash
+      ? bashRuleMatches(rules, "deny", toolName, bashCmd, bashSegs)
+      : ruleMatches(rules, "deny", toolName, tStr);
+    if (isDenied) return "deny";
+
+    // Step 3: config ALLOW or grant (before ASK — grants override the ask-list in permissive)
+    const isAllowed = isBash
+      ? bashRuleMatches(rules, "allow", toolName, bashCmd, bashSegs)
+      : ruleMatches(rules, "allow", toolName, tStr);
+    if (isAllowed) return "allow";
+    for (const grant of remembered) {
+      const covered = isBash
+        ? bashGrantCovers(grant, toolName, bashCmd, bashSegs)
+        : grantCovers(grant, toolName, target);
+      if (covered) return "allow";
+    }
+
+    // Step 4: config ASK
+    const isAsked = isBash
+      ? bashRuleMatches(rules, "ask", toolName, bashCmd, bashSegs)
+      : ruleMatches(rules, "ask", toolName, tStr);
+    if (isAsked) return "ask";
+
+    // Step 5: default → allow
+    return "allow";
+  }
+
+  // ── safe | trusted ───────────────────────────────────────────────────────────
+
+  // Step 1: .env path target default-deny (override-able by explicit config allow)
   if (target.kind === "path" && target.isEnv) {
     if (!ruleMatches(rules, "allow", toolName, tStr)) return "deny";
   }
 
-  // 2. Config DENY
-  if (ruleMatches(rules, "deny", toolName, tStr)) return "deny";
+  // Step 2: config DENY
+  const isDenied = isBash
+    ? bashRuleMatches(rules, "deny", toolName, bashCmd, bashSegs)
+    : ruleMatches(rules, "deny", toolName, tStr);
+  if (isDenied) return "deny";
 
-  // 3. Config ASK
-  if (ruleMatches(rules, "ask", toolName, tStr)) return "ask";
+  // Step 3: config ASK
+  const isAsked = isBash
+    ? bashRuleMatches(rules, "ask", toolName, bashCmd, bashSegs)
+    : ruleMatches(rules, "ask", toolName, tStr);
+  if (isAsked) return "ask";
 
-  // 4. Config ALLOW or remembered grant
-  if (ruleMatches(rules, "allow", toolName, tStr)) return "allow";
+  // Step 4: config ALLOW or remembered grant
+  const isAllowed = isBash
+    ? bashRuleMatches(rules, "allow", toolName, bashCmd, bashSegs)
+    : ruleMatches(rules, "allow", toolName, tStr);
+  if (isAllowed) return "allow";
   for (const grant of remembered) {
-    if (grantCovers(grant, toolName, target)) return "allow";
+    const covered = isBash
+      ? bashGrantCovers(grant, toolName, bashCmd, bashSegs)
+      : grantCovers(grant, toolName, target);
+    if (covered) return "allow";
   }
 
-  // 5. Mode default
-  return modeDefault(mode, toolName, target, cwd);
+  // Step 5: mode default
+  return modeDefault(mode, toolName, target, cwd, bashSegs);
 }
 
-/** Mode default (step 5) for safe/trusted when no explicit rule or grant matched. */
+/**
+ * Mode default (step 5) for safe/trusted when no explicit rule or grant matched.
+ * Uses segment-aware quantifiers for bash targets.
+ */
 function modeDefault(
-  mode: PermissionMode,
+  mode: "safe" | "trusted",
   toolName: string,
   target: ResolvedTarget,
   cwd: string,
+  bashSegs: string[],
 ): Decision {
   if (mode === "safe") {
     return SAFE_ALLOW_TOOLS.has(toolName) ? "allow" : "ask";
@@ -204,11 +298,16 @@ function modeDefault(
     return isWithinDir(target.resolvedPath, cwd) ? "allow" : "ask";
   }
   if (target.kind === "bash") {
-    // Hardcoded deny patterns take priority over allow patterns at the mode-default level
-    if (TRUSTED_BASH_DENY_PATTERNS.some((r) => safeTest(r, target.command))) return "deny";
-    if (TRUSTED_BASH_ALLOW_PATTERNS.some((r) => safeTest(r, target.command))) return "allow";
+    // DENY: any segment matches a deny pattern, OR the whole command does
+    // (whole-command check preserves pipe-spanning patterns like curl|bash).
+    if (denyMatches(target.command, bashSegs, TRUSTED_BASH_DENY_PATTERNS)) return "deny";
+    // ALLOW: every segment covered by an allow pattern
+    if (allSegmentsCovered(bashSegs, TRUSTED_BASH_ALLOW_PATTERNS)) return "allow";
     return "ask";
   }
   // custom/other tools → ask
   return "ask";
 }
+
+// Re-export for callers that only need the segment helpers (e.g. tests)
+export { anySegmentMatches, allSegmentsCovered, denyMatches };

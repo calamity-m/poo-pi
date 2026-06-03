@@ -15,7 +15,7 @@ import {
 } from "./persistence.ts";
 import type { PermissionMode, PermissionState } from "./types.ts";
 
-const MODES: PermissionMode[] = ["safe", "trusted", "open"];
+const MODES: PermissionMode[] = ["safe", "trusted", "open", "permissive"];
 
 /**
  * Register the `/permissions [safe|trusted|open|edit]` operator command.
@@ -30,7 +30,7 @@ const MODES: PermissionMode[] = ["safe", "trusted", "open"];
 export function registerPermissionsCommand(pi: ExtensionAPI, state: PermissionState): void {
   pi.registerCommand("permissions", {
     description:
-      "View or change the permission mode (safe / trusted / open) and inspect active rules",
+      "View or change the permission mode (safe / trusted / open / permissive) and inspect active rules",
     handler: async (args, ctx) => {
       const sub = args.trim();
 
@@ -39,7 +39,7 @@ export function registerPermissionsCommand(pi: ExtensionAPI, state: PermissionSt
         return;
       }
 
-      if (sub === "safe" || sub === "trusted" || sub === "open") {
+      if (sub === "safe" || sub === "trusted" || sub === "open" || sub === "permissive") {
         await applyMode(ctx, state, sub as PermissionMode);
         return;
       }
@@ -136,18 +136,20 @@ function buildShowcase(state: PermissionState): string[] {
   lines.push("");
 
   lines.push("── safe mode ─────────────────────────────────────────────");
+  lines.push(" precedence: .env-deny → config deny → config ask → config allow/grant → default");
   lines.push(` allows:  ${[...SAFE_ALLOW_TOOLS].join(", ")}`);
   lines.push(" prompts: write, edit, bash, and any other tool");
   lines.push(" blocks:  (nothing extra beyond .env)");
   lines.push("");
 
   lines.push("── trusted mode ──────────────────────────────────────────");
+  lines.push(" precedence: .env-deny → config deny → config ask → config allow/grant → default");
   lines.push(" allows:  path tools (read/write/edit/grep/find/ls) within cwd");
-  lines.push(" allows bash matching:");
+  lines.push(" allows bash (all segments must match):");
   for (const p of TRUSTED_BASH_ALLOW_PATTERNS) {
     lines.push(`   ${p.source}`);
   }
-  lines.push(" denies bash matching (mode default, override-able by config allow):");
+  lines.push(" denies bash (any segment or whole command; override-able by config allow):");
   for (const p of TRUSTED_BASH_DENY_PATTERNS) {
     lines.push(`   ${p.source}`);
   }
@@ -155,8 +157,30 @@ function buildShowcase(state: PermissionState): string[] {
   lines.push("");
 
   lines.push("── open mode ─────────────────────────────────────────────");
-  lines.push(" allows:  everything (no prompts)");
+  lines.push(" allows:  everything (config rules ignored)");
   lines.push(" blocks:  .env direct path-tool access (see below)");
+  lines.push("");
+
+  lines.push("── permissive mode ───────────────────────────────────────");
+  lines.push(" precedence: .env-deny → config deny → config allow/grant → config ask → allow");
+  lines.push(" allows:  everything by default; honors config rules");
+  lines.push(" ask:     add config ask rules to prompt for specific commands/tools");
+  lines.push("   grants (Always For This Project) override the ask-list");
+  lines.push("   allow rules also override the ask-list");
+  lines.push(" blocks:  .env (path and bash) same as open; config deny rules");
+  lines.push(" note:    ships with no built-in ask patterns — fresh permissive ≡ open");
+  lines.push("   until you add ask rules via /permissions edit");
+  lines.push("");
+
+  lines.push("── compound bash commands (all modes) ────────────────────");
+  lines.push(" commands are split into segments (&&, ||, |, ;, newline, &)");
+  lines.push(" ALLOW: every segment must be covered — one uncovered segment → ask");
+  lines.push(" ASK:   any segment matching an ask rule → prompt");
+  lines.push(" DENY:  any segment matching a deny rule, OR the whole command");
+  lines.push("   (whole-command match preserves pipe-spanning patterns like curl|bash)");
+  lines.push(" command substitution ($(...) or backticks) → always uncoverable → ask/deny");
+  lines.push(" backward-compat note: saved patterns that matched a whole compound string");
+  lines.push("   now match per-segment; anchored single-command patterns are unaffected");
   lines.push("");
 
   lines.push("── always active (all modes) ──────────────────────────────");

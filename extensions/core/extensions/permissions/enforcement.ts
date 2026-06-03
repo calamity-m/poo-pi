@@ -8,6 +8,7 @@ import type {
   ToolCallEventResult,
 } from "@earendil-works/pi-coding-agent";
 
+import { deriveBashPatterns } from "./bash.ts";
 import { decide, isBashEnvAccess, isEnvBasename } from "./policy.ts";
 import { addGrant, writePermissionState } from "./persistence.ts";
 import type {
@@ -127,39 +128,29 @@ function isKnownPathTool(toolName: string): boolean {
 // ── Grant derivation ─────────────────────────────────────────────────────────
 
 /**
- * Derive an "Always For This Project" grant from a resolved target.
- * - Path tools: directory prefix covering the target's parent dir and all subdirs.
- * - Bash: anchored first-token regex (pre-filled for operator editing).
+ * Derive "Always For This Project" grants from a resolved target.
+ * - Path tools: one grant with a directory prefix covering the target's parent dir.
+ * - Bash: one grant per distinct segment (flag-stop derived pattern, deduped).
+ *   A compound command like `npm run build && npm install` produces two grants.
  */
-function deriveGrant(toolName: string, target: ResolvedTarget): CompiledGrant | undefined {
+function deriveGrant(toolName: string, target: ResolvedTarget): CompiledGrant[] {
   if (target.kind === "path") {
     const dirPrefix = dirname(target.resolvedPath);
-    return { tool: toolName, dirPrefix };
+    return [{ tool: toolName, dirPrefix }];
   }
   if (target.kind === "bash") {
-    const pattern = deriveFirstTokenPattern(target.command);
-    try {
-      return { tool: toolName, pattern, regex: new RegExp(pattern) };
-    } catch {
-      return undefined;
+    const patterns = deriveBashPatterns(target.command);
+    const grants: CompiledGrant[] = [];
+    for (const pattern of patterns) {
+      try {
+        grants.push({ tool: toolName, pattern, regex: new RegExp(pattern) });
+      } catch {
+        // Invalid derived pattern — skip (shouldn't happen with the deriver)
+      }
     }
+    return grants;
   }
-  return undefined;
-}
-
-/**
- * Derive an anchored first-token regex from a bash command.
- * Strips leading env-var assignments (e.g. `NODE_ENV=prod`) then anchors the
- * first identifier with `\b`. Operators should review and edit before saving.
- */
-function deriveFirstTokenPattern(command: string): string {
-  // Strip leading env-var assignments
-  const stripped = command.replace(/^(\w+=\S+\s+)+/, "").trim();
-  const match = /^([\w][\w.-]*)/.exec(stripped);
-  const firstToken = match?.[1] ?? stripped.split(/\s+/)[0] ?? "";
-  if (!firstToken) return "^(?:)"; // degenerate fallback
-  const escaped = firstToken.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-  return `^${escaped}\\b`;
+  return [];
 }
 
 // ── Prompt dialog ─────────────────────────────────────────────────────────────
@@ -188,27 +179,44 @@ export async function askOperator(
   }
 
   if (choice === "Always For This Project") {
-    const grant = deriveGrant(toolName, target);
-    if (grant) {
-      let finalGrant = grant;
-      // For bash, let the operator review/edit the pre-filled pattern before saving
-      if (target.kind === "bash" && grant.pattern !== undefined) {
-        const edited = await ctx.ui.editor(
-          "Edit remembered command rule (blank uses the suggestion)",
-          grant.pattern,
-        );
-        const pattern =
-          edited === undefined || edited.trim() === "" ? grant.pattern : edited.trim();
+    const grants = deriveGrant(toolName, target);
+    if (grants.length === 0) return undefined;
+
+    if (target.kind === "bash") {
+      // Multi-line editor: one pattern per line for compound commands.
+      const prefill = grants.map((g) => g.pattern ?? "").join("\n");
+      const edited = await ctx.ui.editor(
+        "Edit remembered command rule(s) — one regex per line",
+        prefill,
+      );
+      if (edited === undefined) return undefined; // user cancelled → Only Once
+
+      const lines = edited
+        .split("\n")
+        .map((l) => l.trim())
+        .filter(Boolean);
+      if (lines.length === 0) return undefined; // operator cleared everything → Only Once
+
+      // Validate all lines before saving — reject the whole batch if any line is invalid.
+      const compiled: CompiledGrant[] = [];
+      for (const line of lines) {
         try {
-          finalGrant = { tool: toolName, pattern, regex: new RegExp(pattern) };
+          compiled.push({ tool: toolName, pattern: line, regex: new RegExp(line) });
         } catch {
-          // Invalid regex from operator edit — fall back to the derived pattern
-          finalGrant = grant;
+          ctx.ui.notify(
+            `[permissions] grant rejected — invalid regex: ${line} (not saved; call is Only Once)`,
+            "error",
+          );
+          return undefined;
         }
       }
-      addGrant(state, finalGrant);
-      await writePermissionState(ctx.cwd, state);
+      for (const g of compiled) addGrant(state, g);
+    } else {
+      // Path tool: single directory-prefix grant, no editor
+      for (const g of grants) addGrant(state, g);
     }
+
+    await writePermissionState(ctx.cwd, state);
     return undefined;
   }
 
@@ -233,8 +241,9 @@ function targetLabel(toolName: string, target: ResolvedTarget): string {
  * (like `open` mode) except for a known direct `.env` path-tool target which
  * is still denied. Notifies the operator at most once per process on degraded state.
  *
- * Headless sessions (`!ctx.hasUI`) always behave as `open` mode — no gating of
- * write/bash/etc., only the `.env` path-tool default-deny still applies.
+ * Headless sessions (`!ctx.hasUI`) always behave as `open` mode regardless of the
+ * persisted mode (safe, trusted, open, or permissive) — no gating of write/bash/etc.,
+ * only the `.env` path-tool default-deny still applies.
  *
  * @param state - Process-global permission state (mutated on "Always" grants).
  * @param mutex - Shared prompt mutex to serialize concurrent ask dialogs.

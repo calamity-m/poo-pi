@@ -1,5 +1,5 @@
 /** Active permission mode for the current project. */
-export type PermissionMode = "safe" | "trusted" | "open";
+export type PermissionMode = "safe" | "trusted" | "open" | "permissive";
 
 /** Action outcome for a policy rule. */
 export type RuleAction = "allow" | "ask" | "deny";
@@ -25,7 +25,7 @@ export interface RememberedGrant {
   tool: string;
   /** Absolute directory prefix for path tools; covers the dir and all subdirs. */
   dirPrefix?: string;
-  /** Anchored first-token regex string for bash. */
+  /** Anchored regex string for bash commands (usually a flag-stop command prefix). */
   pattern?: string;
 }
 

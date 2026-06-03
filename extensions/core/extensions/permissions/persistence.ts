@@ -83,7 +83,7 @@ export function parseAndCompile(raw: unknown): PermissionState {
 
 /** Return true if the value is a valid PermissionMode. */
 export function isValidMode(value: unknown): value is PermissionMode {
-  return value === "safe" || value === "trusted" || value === "open";
+  return value === "safe" || value === "trusted" || value === "open" || value === "permissive";
 }
 
 /** Compile raw rule objects, dropping any with invalid patterns. */
@@ -148,7 +148,7 @@ export function validateConfig(raw: unknown): PermissionState | string {
   }
   const obj = raw as Record<string, unknown>;
   if (!isValidMode(obj["mode"])) {
-    return `"mode" must be "safe", "trusted", or "open"; got ${JSON.stringify(obj["mode"])}`;
+    return `"mode" must be "safe", "trusted", "open", or "permissive"; got ${JSON.stringify(obj["mode"])}`;
   }
   if (obj["rules"] !== undefined && !Array.isArray(obj["rules"])) {
     return '"rules" must be an array';
@@ -161,11 +161,18 @@ export function validateConfig(raw: unknown): PermissionState | string {
 }
 
 /**
- * Add a remembered grant to the in-memory state.
- * Deduplication is not performed — the caller controls when to persist.
+ * Add a remembered grant to the in-memory state, deduplicating by `tool`+`pattern`
+ * (for bash grants) or `tool`+`dirPrefix` (for path grants). Does not persist —
+ * the caller must call `writePermissionState` after all grants are added.
  */
 export function addGrant(state: PermissionState, grant: CompiledGrant): void {
-  state.remembered.push(grant);
+  const isDup = state.remembered.some((g) => {
+    if (g.tool !== grant.tool) return false;
+    if (grant.pattern !== undefined) return g.pattern === grant.pattern;
+    if (grant.dirPrefix !== undefined) return g.dirPrefix === grant.dirPrefix;
+    return false;
+  });
+  if (!isDup) state.remembered.push(grant);
 }
 
 /** Build a fresh ExtensionContext-aware loader (convenience wrapper for session_start). */
