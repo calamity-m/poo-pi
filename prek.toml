@@ -21,4 +21,5 @@ hooks = [
     "javascript",
     "ts",
   ] },
+  { id = "npm-test", name = "npm test", entry = "npm test", language = "system", pass_filenames = false },
 ]

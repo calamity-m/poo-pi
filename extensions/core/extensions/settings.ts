@@ -1,4 +1,5 @@
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
+import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
 
@@ -30,6 +31,16 @@ export interface CoreSettingsControllers {
 
 /** Permission modes offered as a cycling row in the settings UI. */
 const MODES: PermissionMode[] = ["safe", "trusted", "permissive", "open"];
+
+/** Thinking levels that can be persisted for a configured subagent tier. */
+const SUBAGENT_THINKING_LEVELS = [
+  "off",
+  "minimal",
+  "low",
+  "medium",
+  "high",
+  "xhigh",
+] as const satisfies readonly ThinkingLevel[];
 
 /** Result of the settings selector: the user closed it, or activated a configure/edit action. */
 type SelectorResult = { kind: "close" } | { kind: "action"; id: string };
@@ -332,17 +343,18 @@ async function configureSubagentTier(
 
   const thinkingLevel = await ctx.ui.select(`Subagent ${tier} thinking level`, [
     "unset",
-    "off",
-    "minimal",
-    "low",
-    "medium",
-    "high",
-    "xhigh",
+    ...SUBAGENT_THINKING_LEVELS,
   ]);
+  if (thinkingLevel && thinkingLevel !== "unset" && !isSubagentThinkingLevel(thinkingLevel)) {
+    ctx.ui.notify(`[core-settings] unsupported thinking level selected: ${thinkingLevel}`, "error");
+    return;
+  }
+  const persistedThinkingLevel =
+    thinkingLevel && thinkingLevel !== "unset" ? thinkingLevel : undefined;
   const next = { ...current };
   next[tier] = {
     model: selectedModel,
-    ...(thinkingLevel && thinkingLevel !== "unset" ? { thinkingLevel } : {}),
+    ...(persistedThinkingLevel ? { thinkingLevel: persistedThinkingLevel } : {}),
   };
   const validated = validateCoreSettings({ version: 1, subagents: next });
   if (typeof validated === "string") {
@@ -351,4 +363,9 @@ async function configureSubagentTier(
   }
   await writeCoreSubagentSettings(ctx.cwd, next);
   ctx.ui.notify(`[core-settings] subagent ${tier} updated`, "info");
+}
+
+/** Return whether a selected UI string is a supported persisted thinking level. */
+function isSubagentThinkingLevel(value: string): value is ThinkingLevel {
+  return (SUBAGENT_THINKING_LEVELS as readonly string[]).includes(value);
 }
