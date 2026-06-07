@@ -1,11 +1,12 @@
 import assert from "node:assert/strict";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { pathToFileURL } from "node:url";
 import test from "node:test";
 
 import { writeCoreSubagentSettings } from "../extensions/core/config/persistence.ts";
-import { __subagentsForTest } from "../extensions/core/extensions/subagents.ts";
+import { __subagentsForTest } from "../extensions/core/extensions/subagents/index.ts";
 
 const fastModel = { provider: "test", id: "fast", baseUrl: "http://127.0.0.1:1" };
 const highModel = { provider: "test", id: "high", baseUrl: "http://127.0.0.1:1" };
@@ -83,4 +84,218 @@ test("resolveSubagentModel falls back to the active parent model and thinking le
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }
+});
+
+test("parsePresetAgentFile reads valid frontmatter and body", () => {
+  const preset = __subagentsForTest.parsePresetAgentFile(
+    "explorer.md",
+    `---\nname: explorer\ndescription: Explore files\ntier: fast\ntools: read-only\noutputFormat: bullets\n---\n\nExplore safely.`,
+    "/tmp/explorer.md",
+  );
+  assert.equal(preset.name, "explorer");
+  assert.equal(preset.description, "Explore files");
+  assert.equal(preset.tier, "fast");
+  assert.equal(preset.tools, "read-only");
+  assert.equal(preset.outputFormat, "bullets");
+  assert.equal(preset.body, "Explore safely.");
+});
+
+test("parsePresetAgentFile rejects invalid metadata", () => {
+  assert.throws(
+    () =>
+      __subagentsForTest.parsePresetAgentFile(
+        "bad.md",
+        `---\nname: other\n---\nbody`,
+        "/tmp/bad.md",
+      ),
+    /must match/,
+  );
+  assert.throws(
+    () =>
+      __subagentsForTest.parsePresetAgentFile(
+        "bad.md",
+        `---\ntools: all\n---\nbody`,
+        "/tmp/bad.md",
+      ),
+    /invalid tools/,
+  );
+  assert.throws(
+    () =>
+      __subagentsForTest.parsePresetAgentFile(
+        "bad.md",
+        `---\nname: bad\nname: bad\n---\nbody`,
+        "/tmp/bad.md",
+      ),
+    /duplicate frontmatter key/,
+  );
+  assert.throws(
+    () =>
+      __subagentsForTest.parsePresetAgentFile("bad.md", `---\n# nope\n---\nbody`, "/tmp/bad.md"),
+    /comments are not supported/,
+  );
+  assert.throws(
+    () =>
+      __subagentsForTest.parsePresetAgentFile(
+        "bad.md",
+        `---\ntools:\n  - read\n---\nbody`,
+        "/tmp/bad.md",
+      ),
+    /unsupported frontmatter structure/,
+  );
+  assert.throws(
+    () =>
+      __subagentsForTest.parsePresetAgentFile(
+        "bad.md",
+        `---\nname: bad\n---\n${"x".repeat(__subagentsForTest.MAX_PRESET_BODY_CHARS + 1)}`,
+        "/tmp/bad.md",
+      ),
+    /body exceeds/,
+  );
+});
+
+test("loadPresetAgents skips malformed presets and supports installed-layout paths", async () => {
+  const root = await mkdtemp(join(tmpdir(), "poo-pi-installed-subagents-"));
+  try {
+    const agentsDir = join(
+      root,
+      "node_modules",
+      "poo-pi",
+      "extensions",
+      "core",
+      "extensions",
+      "subagents",
+      "agents",
+    );
+    await mkdir(agentsDir, { recursive: true });
+    await writeFile(
+      join(agentsDir, "explorer.md"),
+      `---\nname: explorer\ndescription: Explore\ntier: any\ntools: read-only\n---\nbody`,
+    );
+    await writeFile(join(agentsDir, "broken.md"), `---\ntools: nope\n---\nbody`);
+
+    const { presets, warnings } = __subagentsForTest.loadPresetAgents(
+      pathToFileURL(`${agentsDir}/`),
+    );
+    assert.equal(presets.size, 1);
+    assert.equal(presets.get("explorer").sourcePath.endsWith("explorer.md"), true);
+    assert.equal(warnings.length, 1);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("loadPresetAgents treats missing or empty agents directories as zero presets", async () => {
+  const root = await mkdtemp(join(tmpdir(), "poo-pi-empty-subagents-"));
+  try {
+    const missing = __subagentsForTest.loadPresetAgents(pathToFileURL(`${join(root, "missing")}/`));
+    assert.equal(missing.presets.size, 0);
+    assert.equal(missing.warnings.length, 0);
+
+    const emptyDir = join(root, "agents");
+    await mkdir(emptyDir);
+    const empty = __subagentsForTest.loadPresetAgents(pathToFileURL(`${emptyDir}/`));
+    assert.equal(empty.presets.size, 0);
+    assert.equal(empty.warnings.length, 0);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("applyPresetAgent merges defaults while explicit params win", () => {
+  const presets = new Map([
+    [
+      "explorer",
+      {
+        name: "explorer",
+        description: "Explore",
+        tier: "fast",
+        tools: "read-only",
+        outputFormat: "bullets",
+        body: "preset role",
+        sourcePath: "/tmp/explorer.md",
+      },
+    ],
+  ]);
+  const merged = __subagentsForTest.applyPresetAgent(
+    {
+      agent: "explorer",
+      task: "do it",
+      tier: "high",
+      model: "test/high",
+      role: "custom role",
+      context: "custom context",
+      tools: "coding",
+      outputFormat: "json",
+    },
+    presets,
+  );
+  assert.equal(merged.tier, "high");
+  assert.equal(merged.model, "test/high");
+  assert.equal(merged.tools, "coding");
+  assert.equal(merged.outputFormat, "json");
+  assert.equal(merged.role, "preset role\n\ncustom role");
+  assert.equal(merged.context, "custom context");
+  assert.equal(merged.presetAgentName, "explorer");
+});
+
+test("applyPresetAgent treats tier any as parent fallback", () => {
+  const presets = new Map([
+    [
+      "anyone",
+      {
+        name: "anyone",
+        tier: "any",
+        body: "preset role",
+        sourcePath: "/tmp/anyone.md",
+      },
+    ],
+  ]);
+  const merged = __subagentsForTest.applyPresetAgent({ agent: "anyone", task: "do it" }, presets);
+  assert.equal(merged.tier, undefined);
+});
+
+test("applyPresetAgent supports preset-only, custom-only, and unknown-agent calls", () => {
+  const presets = new Map([
+    [
+      "explorer",
+      {
+        name: "explorer",
+        tier: "fast",
+        tools: "read-only",
+        body: "preset role",
+        sourcePath: "/tmp/explorer.md",
+      },
+    ],
+  ]);
+  const presetOnly = __subagentsForTest.applyPresetAgent(
+    { agent: "explorer", task: "do it" },
+    presets,
+  );
+  assert.equal(presetOnly.role, "preset role");
+  assert.equal(presetOnly.tier, "fast");
+
+  const customOnly = { task: "do it", role: "custom role" };
+  assert.equal(__subagentsForTest.applyPresetAgent(customOnly, presets), customOnly);
+  assert.throws(
+    () => __subagentsForTest.applyPresetAgent({ agent: "missing", task: "do it" }, presets),
+    /Available preset agents: explorer/,
+  );
+});
+
+test("preset prompt order keeps role before context, files, format, and task", () => {
+  const prompt = __subagentsForTest.buildSubagentPrompt(
+    {
+      task: "task text",
+      role: "preset role\n\ncustom role",
+      context: "custom context",
+      files: ["README.md"],
+      outputFormat: "bullets",
+    },
+    ["### README.md\n```\ncontent\n```"],
+  );
+  assert.ok(prompt.indexOf("Role:\npreset role") < prompt.indexOf("Context:\ncustom context"));
+  assert.ok(prompt.indexOf("Context:\ncustom context") < prompt.indexOf("Preloaded files:"));
+  assert.ok(prompt.indexOf("Preloaded files:") < prompt.indexOf("Relevant file paths:"));
+  assert.ok(prompt.indexOf("Relevant file paths:") < prompt.indexOf("Output format:"));
+  assert.ok(prompt.indexOf("Output format:") < prompt.indexOf("Task:\ntask text"));
 });

@@ -103,59 +103,60 @@ spawn_subagent(params):
 
 Move the existing subagents extension from a single TypeScript file into a directory so bundled agent markdown files can live beside the implementation. This deliverable should preserve existing runtime behavior before adding preset functionality.
 
-- [ ] Create `extensions/core/extensions/subagents/index.ts` containing the current implementation from `extensions/core/extensions/subagents.ts`.
-- [ ] Search for all references to `extensions/core/extensions/subagents.ts` and `./extensions/subagents.ts` before changing imports.
-- [ ] Update imports in `extensions/core/index.ts` and tests to reference the new directory module path explicitly.
-- [ ] Remove the old `extensions/core/extensions/subagents.ts` (reference search confirms only two internal importers; no re-export shim needed).
-- [ ] Run existing subagent tests to confirm behavior is unchanged after the move.
+- [x] Create `extensions/core/extensions/subagents/index.ts` containing the current implementation from `extensions/core/extensions/subagents.ts`.
+- [x] Search for all references to `extensions/core/extensions/subagents.ts` and `./extensions/subagents.ts` before changing imports.
+- [x] Update imports in `extensions/core/index.ts` and tests to reference the new directory module path explicitly.
+- [x] Remove the old `extensions/core/extensions/subagents.ts` (reference search confirms only two internal importers; no re-export shim needed).
+- [x] Run existing subagent tests to confirm behavior is unchanged after the move.
 
 ### Deliverable 2. Preset agent loader and validation
 
 Add a small loader for markdown preset files under `extensions/core/extensions/subagents/agents/*.md`. It should parse frontmatter, validate supported fields, expose preset metadata to the tool implementation, and fail with clear errors for malformed bundled presets.
 
-- [ ] Define a documented `PresetAgent` type with name, description, optional tier, optional tools, optional output format, markdown body, and source path.
-- [ ] Implement a local frontmatter parser for simple scalar fields and enum validation for `tier: fast | high | any` and `tools: none | read-only | coding`.
-- [ ] Load and validate built-in presets during extension registration from `agents/*.md`, using `import.meta.url` plus filesystem URL/path handling rather than `ctx.cwd`.
-- [ ] **Early gate:** prove module-relative discovery works against an installed layout (a test that mimics the `node_modules` directory structure resolves presets), not just the dev tree, before building Deliverables 3–5.
-- [ ] Enforce `MAX_PRESET_BODY_CHARS = 8_000` on the preset body during loading.
-- [ ] Skip-and-warn (not hard-fail) on duplicate keys, duplicate preset names, invalid filenames, invalid enum values, oversized bodies, unsupported frontmatter structures, unreadable files, and mismatched frontmatter `name` values; load remaining valid presets.
-- [ ] Handle a missing or empty `agents/` directory by yielding zero presets without error.
-- [ ] Add at least one bundled preset markdown file, `extensions/core/extensions/subagents/agents/explorer.md`.
+- [x] Define a documented `PresetAgent` type with name, description, optional tier, optional tools, optional output format, markdown body, and source path.
+- [x] Implement a local frontmatter parser for simple scalar fields and enum validation for `tier: fast | high | any` and `tools: none | read-only | coding`.
+- [x] Load and validate built-in presets during extension registration from `agents/*.md`, using `import.meta.url` plus filesystem URL/path handling rather than `ctx.cwd`.
+- [x] **Early gate:** prove module-relative discovery works against an installed layout (a test that mimics the `node_modules` directory structure resolves presets), not just the dev tree, before building Deliverables 3–5.
+- [x] Enforce `MAX_PRESET_BODY_CHARS = 8_000` on the preset body during loading.
+- [x] Skip-and-warn (not hard-fail) on duplicate keys, duplicate preset names, invalid filenames, invalid enum values, oversized bodies, unsupported frontmatter structures, unreadable files, and mismatched frontmatter `name` values; load remaining valid presets.
+- [x] Handle a missing or empty `agents/` directory by yielding zero presets without error.
+- [x] Add at least one bundled preset markdown file, `extensions/core/extensions/subagents/agents/explorer.md`.
 
 ### Deliverable 3. Tool schema and prompt merge behavior
 
 Extend `spawn_subagent` so callers can request a preset by name while retaining the custom subagent path. The implementation should make precedence obvious and testable: explicit call parameters override preset defaults, and preset role text is combined with custom role/context rather than silently discarded.
 
-- [ ] Add optional `agent` to `spawnSubagentSchema` with a description that points to named preset agents, while keeping `task` required and `role`/`context` optional.
-- [ ] Implement `applyPresetAgent(params, presets)` or equivalent pure helper for merging preset metadata with explicit params.
-- [ ] Treat preset `tier: any` as no tier default, allowing the existing parent fallback unless the caller provides `tier` or `model`.
-- [ ] Store the selected preset name/source on the in-memory run record and include it in tool update details where useful for debugging.
-- [ ] Ensure missing preset names return an error that lists available presets.
-- [ ] Add tests for the final built prompt order so preset text does not accidentally override explicit custom context/output instructions.
+- [x] Add optional `agent` to `spawnSubagentSchema` with a description that points to named preset agents, while keeping `task` required and `role`/`context` optional.
+- [x] Implement `applyPresetAgent(params, presets)` or equivalent pure helper for merging preset metadata with explicit params.
+- [x] Treat preset `tier: any` as no tier default, allowing the existing parent fallback unless the caller provides `tier` or `model`.
+- [x] Store the selected preset name/source on the in-memory run record and include it in tool update details where useful for debugging.
+- [x] Ensure missing preset names return an error that lists available presets.
+- [x] Add tests for the final built prompt order so preset text does not accidentally override explicit custom context/output instructions.
 
 ### Deliverable 4. Operator visibility and documentation
 
 Make presets discoverable enough for the parent agent and human operator without adding a separate large UI. The tool guidance should tell the parent agent when to use a preset versus a custom role.
 
-- [ ] Update `promptSnippet`/`promptGuidelines` to mention preset agents and the custom fallback.
-- [ ] Include available preset names **and their `description` field** in the tool description or generated guidance using registration-time loaded preset metadata, so the parent agent can pick the right preset.
-- [ ] Update `/subagents` reporting to show the preset agent name from the run record for runs that used one.
-- [ ] Add a concise README or implementation note entry documenting the bundled preset file format, supported frontmatter subset, allowed tool policies, and override rules.
+- [x] Update `promptSnippet`/`promptGuidelines` to mention preset agents and the custom fallback.
+- [x] Include available preset names **and their `description` field** in the tool description or generated guidance using registration-time loaded preset metadata, so the parent agent can pick the right preset.
+- [x] Update `/subagents` reporting to show the preset agent name from the run record for runs that used one.
+- [x] Add a concise README or implementation note entry documenting the bundled preset file format, supported frontmatter subset, allowed tool policies, and override rules.
 
 ### Deliverable 5. Verification and package checks
 
 Cover the refactor and preset behavior with focused tests and package smoke checks. The key acceptance criterion is that existing custom subagent calls keep working while named presets alter defaults and prompt content predictably.
 
-- [ ] Update existing `tests/subagents.test.mjs` imports and keep current resolver tests passing.
-- [ ] Add tests for frontmatter parsing, invalid preset metadata, duplicate keys, duplicate/mismatched names, invalid tool policies, oversized bodies, unsupported frontmatter structures, and `tier: any` behavior.
-- [ ] Add tests proving skip-and-warn semantics (one malformed preset does not block valid ones) and that a missing/empty `agents/` directory yields zero presets without error.
-- [ ] Add tests for preset merge precedence, including explicit `tools`, `tier`, `model`, `role`, `context`, and `outputFormat` overrides.
-- [ ] Add tests for preset-only calls (`agent` plus `task`) and custom-only calls (no `agent`) to prove both schema paths work.
-- [ ] Run `npm test`, `npm run lint`, `npm run format:check`, `npm run validate:json`, and `npm run pack:dry-run`.
-- [ ] Confirm `npm run pack:dry-run` includes `extensions/core/extensions/subagents/agents/explorer.md`.
+- [x] Update existing `tests/subagents.test.mjs` imports and keep current resolver tests passing.
+- [x] Add tests for frontmatter parsing, invalid preset metadata, duplicate keys, duplicate/mismatched names, invalid tool policies, oversized bodies, unsupported frontmatter structures, and `tier: any` behavior.
+- [x] Add tests proving skip-and-warn semantics (one malformed preset does not block valid ones) and that a missing/empty `agents/` directory yields zero presets without error.
+- [x] Add tests for preset merge precedence, including explicit `tools`, `tier`, `model`, `role`, `context`, and `outputFormat` overrides.
+- [x] Add tests for preset-only calls (`agent` plus `task`) and custom-only calls (no `agent`) to prove both schema paths work.
+- [x] Run `npm test`, `npm run lint`, `npm run format:check`, `npm run validate:json`, and `npm run pack:dry-run`.
+- [x] Confirm `npm run pack:dry-run` includes `extensions/core/extensions/subagents/agents/explorer.md`.
 
 ## Issues
 
+- **2026-06-07 — agent:codex** — Implemented preset subagents: refactored subagents into a directory module, added markdown preset loader/validation with bundled `explorer`, wired `agent` merging and operator visibility, documented the format, and verified tests/lint/format/json/package dry-run (tarball includes `explorer.md`).
 - **2026-06-07 — agent:claude (adversarial review)** — Second pass: 2 adversarial sub-agents (Risks & Assumptions, Completeness & Scope), grounded against the actual `subagents.ts`. 11 findings; 8 merged, 2 resolved by reading code (`tier: any` already maps to the parent-fallback resolver path; `toolPolicyNames` enum-to-tools mapping already exists), 1 downgraded (import churn is only two internal references, no shim needed). Decisions confirmed by user: malformed-preset load policy is skip-and-warn; the `description` field is surfaced in tool guidance. Direct merges: installed-layout discovery early gate, `MAX_PRESET_BODY_CHARS = 8_000` cap + test, pinned frontmatter subset (no comments), missing/empty-dir handling, D1→D2-5 ordering note.
 - **2026-06-07 — agent:claude (adversarial review)** — Plan reviewed by 2 adversarial sub-agents (Risks & Assumptions, Completeness & Scope). 16 findings; 14 merged into plan. Main changes: tightened runtime resource discovery, import-refactor compatibility, tool-policy/frontmatter contracts, registration-time preset loading, preset-only schema tests, and final prompt-order verification. Script-existence concerns were resolved from `package.json`; no separate plan change needed beyond documenting the available scripts.
 - **2026-06-07 — agent:claude** — Initial scope confirmed by user: start with core-bundled presets only at `extensions/core/extensions/subagents/agents/*.md`; support frontmatter; `tier` accepts `fast`, `high`, `any`; named preset calls and custom roll-your-own calls must both remain available.

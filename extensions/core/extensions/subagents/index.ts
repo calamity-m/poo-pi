@@ -17,9 +17,15 @@ import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi
 import type { TSchema, Static } from "typebox";
 import { Type } from "typebox";
 
-import { readCoreSubagentSettings } from "../config/persistence.ts";
-import type { ProxyReadinessHandle } from "./proxy/index.ts";
-import { showInlinePanel, TextPanel, type PanelTheme } from "./proxy/audit-panel.ts";
+import { readCoreSubagentSettings } from "../../config/persistence.ts";
+import type { ProxyReadinessHandle } from "../proxy/index.ts";
+import { showInlinePanel, TextPanel, type PanelTheme } from "../proxy/audit-panel.ts";
+import {
+  loadPresetAgents,
+  MAX_PRESET_BODY_CHARS,
+  parsePresetAgentFile,
+  type PresetAgent,
+} from "./preset-agents.ts";
 
 const TOOL_POLICIES = ["none", "read-only", "coding"] as const;
 const TIERS = ["fast", "high"] as const;
@@ -35,6 +41,9 @@ const toolPolicyNames = {
 } satisfies Record<ToolPolicy, string[]>;
 
 const spawnSubagentSchema = Type.Object({
+  agent: Type.Optional(
+    Type.String({ description: "Optional named preset agent to use before explicit overrides." }),
+  ),
   task: Type.String({ description: "The isolated subagent task to run." }),
   tier: Type.Optional(StringEnum(TIERS, { description: "Configured subagent tier to use." })),
   model: Type.Optional(
@@ -57,6 +66,13 @@ type ToolPolicy = (typeof TOOL_POLICIES)[number];
 type Tier = (typeof TIERS)[number];
 type SubagentRunStatus = "queued" | "running" | "done" | "error" | "aborted";
 
+interface AppliedPresetInput extends SpawnSubagentInput {
+  /** Selected preset name for operator reporting. */
+  presetAgentName?: string;
+  /** Selected preset source path for diagnostics. */
+  presetAgentSource?: string;
+}
+
 interface RegisterSubagentsOptions {
   /** Optional proxy readiness hook; when present, subagents re-resolve models after it runs. */
   proxy?: ProxyReadinessHandle;
@@ -75,6 +91,10 @@ interface SubagentRun {
   modelSource: string;
   /** Tool access policy granted to the nested session. */
   tools: ToolPolicy;
+  /** Optional preset agent used for this run. */
+  presetAgentName?: string;
+  /** Optional preset source path used for this run. */
+  presetAgentSource?: string;
   /** Current lifecycle status. */
   status: SubagentRunStatus;
   /** Compact status line for operators. */
@@ -104,6 +124,9 @@ interface SubagentModelSelection {
 
 /** Register subagent spawning and visibility commands for the core extension bundle. */
 export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOptions = {}): void {
+  const { presets, warnings } = loadPresetAgents(new URL("./agents/", import.meta.url));
+  for (const warning of warnings) console.warn(warning);
+  const presetGuidance = formatPresetGuidance(presets);
   const runs: SubagentRun[] = [];
   let clearWidgetTimer: ReturnType<typeof setTimeout> | undefined;
 
@@ -140,25 +163,27 @@ export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOp
   pi.registerTool({
     name: "spawn_subagent",
     label: "Spawn Subagent",
-    description: "Run an isolated ephemeral Pi subagent and return only its final answer.",
+    description: `Run an isolated ephemeral Pi subagent and return only its final answer.${presetGuidance}`,
     promptSnippet:
-      "Run an isolated subagent for review, investigation, or parallel analysis tasks.",
+      "Run an isolated subagent for review, investigation, or parallel analysis tasks. Use a named preset agent when it fits, or omit agent for a custom role/context.",
     promptGuidelines: [
-      "Use spawn_subagent for isolated investigation, review, or parallel analysis; prefer tier over raw model unless the user asks for a specific model.",
+      "Use spawn_subagent for isolated investigation, review, or parallel analysis; prefer preset agent names or tier over raw model unless the user asks for a specific model.",
       "spawn_subagent defaults to read-only tools; request coding tools only when file mutation is explicitly needed.",
+      "Named preset agents provide default role text, tier/tools/output format, and explicit tool-call parameters override those defaults.",
       "spawn_subagent returns only the final subagent answer; the nested transcript is intentionally ephemeral.",
     ],
     parameters: spawnSubagentSchema as TSchema,
     async execute(_toolCallId, params: SpawnSubagentInput, signal, onUpdate, ctx) {
       let run: SubagentRun | undefined;
       try {
-        let selection = await resolveSubagentModel(params, ctx, pi);
+        const mergedParams = applyPresetAgent(params, presets);
+        let selection = await resolveSubagentModel(mergedParams, ctx, pi);
         await options.proxy?.ensure(ctx);
-        selection = await resolveSubagentModel(params, ctx, pi);
+        selection = await resolveSubagentModel(mergedParams, ctx, pi);
 
         assertProxyLoopbackIfRequired(selection, options.proxy);
-        const policy = params.tools ?? "read-only";
-        run = createRun(params, selection, policy);
+        const policy = mergedParams.tools ?? "read-only";
+        run = createRun(mergedParams, selection, policy);
         runs.unshift(run);
         pruneRuns(runs);
         updateUi(ctx);
@@ -167,7 +192,7 @@ export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOp
           content: [
             {
               type: "text",
-              text: `Starting subagent ${run.id} (${selection.source}, ${policy} tools)…`,
+              text: `Starting subagent ${run.id}${run.presetAgentName ? ` (${run.presetAgentName})` : ""} (${selection.source}, ${policy} tools)…`,
             },
           ],
           details: {
@@ -175,6 +200,8 @@ export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOp
             model: selection.modelId,
             thinkingLevel: selection.thinkingLevel,
             tools: policy,
+            agent: run.presetAgentName,
+            agentSource: run.presetAgentSource,
           },
         });
 
@@ -223,8 +250,8 @@ export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOp
           }
           signal?.addEventListener("abort", abort, { once: true });
           try {
-            const preloadedFiles = await preloadFiles(ctx.cwd, params.files);
-            await session.prompt(buildSubagentPrompt(params, preloadedFiles), {
+            const preloadedFiles = await preloadFiles(ctx.cwd, mergedParams.files);
+            await session.prompt(buildSubagentPrompt(mergedParams, preloadedFiles), {
               source: "extension",
             });
           } finally {
@@ -248,6 +275,8 @@ export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOp
             model: selection.modelId,
             thinkingLevel: selection.thinkingLevel,
             tools: policy,
+            agent: run.presetAgentName,
+            agentSource: run.presetAgentSource,
           },
         };
       } catch (error) {
@@ -267,6 +296,40 @@ export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOp
       }
     },
   });
+}
+
+/** Return markdown preset metadata as one description suffix for tool registration. */
+function formatPresetGuidance(presets: Map<string, PresetAgent>): string {
+  if (presets.size === 0) return "";
+  const lines = [...presets.values()].map(
+    (preset) => `\n- ${preset.name}: ${preset.description ?? "No description provided."}`,
+  );
+  return `\n\nAvailable preset agents:${lines.join("")}`;
+}
+
+/** Merge a named preset with explicit tool-call params, preserving explicit precedence. */
+function applyPresetAgent(
+  params: SpawnSubagentInput,
+  presets: Map<string, PresetAgent>,
+): AppliedPresetInput {
+  if (!params.agent) return params;
+  const preset = presets.get(params.agent);
+  if (!preset) {
+    const available = [...presets.keys()].sort().join(", ") || "none";
+    throw new Error(
+      `Unknown preset agent "${params.agent}". Available preset agents: ${available}.`,
+    );
+  }
+  const presetTier = preset.tier === "any" ? undefined : preset.tier;
+  return {
+    ...params,
+    tier: params.tier ?? presetTier,
+    tools: params.tools ?? preset.tools,
+    outputFormat: params.outputFormat ?? preset.outputFormat,
+    role: [preset.body, params.role].filter(Boolean).join("\n\n") || undefined,
+    presetAgentName: preset.name,
+    presetAgentSource: preset.sourcePath,
+  };
 }
 
 /** Resolve a model override, configured tier, or the current parent fallback from live registry state. */
@@ -372,7 +435,7 @@ function assertProxyLoopbackIfRequired(
 
 /** Create an in-memory run record. */
 function createRun(
-  input: SpawnSubagentInput,
+  input: AppliedPresetInput,
   selection: SubagentModelSelection,
   tools: ToolPolicy,
 ): SubagentRun {
@@ -383,6 +446,8 @@ function createRun(
     thinkingLevel: selection.thinkingLevel,
     modelSource: selection.source,
     tools,
+    presetAgentName: input.presetAgentName,
+    presetAgentSource: input.presetAgentSource,
     status: "queued",
     currentActivity: "queued",
     startedAt: Date.now(),
@@ -472,7 +537,7 @@ function buildSubagentWidget(runs: SubagentRun[]): string[] | undefined {
     .slice(0, 5)
     .map(
       (run) =>
-        `${statusIcon(run.status)} ${run.id} ${run.modelSource} ${run.currentActivity} — ${truncate(run.task, 72)}`,
+        `${statusIcon(run.status)} ${run.id} ${formatRunSource(run)} ${run.currentActivity} — ${truncate(run.task, 72)}`,
     );
 }
 
@@ -480,7 +545,7 @@ function buildSubagentWidget(runs: SubagentRun[]): string[] | undefined {
 function buildSubagentsReport(runs: SubagentRun[]): string[] {
   if (runs.length === 0) return ["No subagent runs recorded in this extension runtime."];
   return runs.flatMap((run) => [
-    `${statusIcon(run.status)} ${run.id} ${run.status.toUpperCase()} · ${run.modelSource} · ${run.modelId}${run.thinkingLevel ? `:${run.thinkingLevel}` : ""} · tools:${run.tools}`,
+    `${statusIcon(run.status)} ${run.id} ${run.status.toUpperCase()} · ${formatRunSource(run)} · ${run.modelId}${run.thinkingLevel ? `:${run.thinkingLevel}` : ""} · tools:${run.tools}`,
     `task: ${truncate(run.task, 140)}`,
     `activity: ${run.currentActivity} · elapsed: ${formatElapsed(run)}`,
     ...(run.error ? [`error: ${truncate(run.error, 160)}`] : []),
@@ -504,7 +569,7 @@ async function selectSubagentRun(
       const items: SelectItem[] = runs.map((run) => ({
         value: run.id,
         label: `${statusIcon(run.status)} ${run.id} ${run.status}`,
-        description: `${formatElapsed(run)} · ${run.modelSource} · ${truncate(run.task, 90)}`,
+        description: `${formatElapsed(run)} · ${formatRunSource(run)} · ${truncate(run.task, 90)}`,
       }));
       const list = new SelectList(items, Math.min(items.length, 12), {
         selectedPrefix: (text: string) => theme.fg("accent", text),
@@ -558,7 +623,7 @@ async function showSubagentTranscript(ctx: ExtensionContext, run: SubagentRun): 
 function buildTranscriptLines(run: SubagentRun, theme: TranscriptTheme): string[] {
   const lines = [
     `${theme.fg("toolTitle", theme.bold(run.id))} ${theme.fg(statusColor(run.status), run.status.toUpperCase())}`,
-    `${theme.fg("muted", "model:")} ${theme.fg("accent", run.modelId)}${run.thinkingLevel ? theme.fg("muted", `:${run.thinkingLevel}`) : ""} ${theme.fg("muted", `tools:${run.tools}`)}`,
+    `${theme.fg("muted", "model:")} ${theme.fg("accent", run.modelId)}${run.thinkingLevel ? theme.fg("muted", `:${run.thinkingLevel}`) : ""} ${theme.fg("muted", `tools:${run.tools}`)}${run.presetAgentName ? theme.fg("muted", ` agent:${run.presetAgentName}`) : ""}`,
     `${theme.fg("muted", "elapsed:")} ${theme.fg("dim", formatElapsed(run))}`,
     "",
     theme.fg("borderMuted", "─── Task ───"),
@@ -705,6 +770,13 @@ function pruneRuns(runs: SubagentRun[]): void {
   if (runs.length > MAX_RECORDED_RUNS) runs.splice(MAX_RECORDED_RUNS);
 }
 
+/** Return the display source for model selection plus preset agent metadata. */
+function formatRunSource(run: SubagentRun): string {
+  return run.presetAgentName
+    ? `${run.modelSource} · agent:${run.presetAgentName}`
+    : run.modelSource;
+}
+
 /** Return a compact status icon. */
 function statusIcon(status: SubagentRunStatus): string {
   if (status === "queued") return "○";
@@ -797,4 +869,8 @@ export const __subagentsForTest = {
   buildSubagentPrompt,
   preloadFiles,
   resolveSubagentModel,
+  loadPresetAgents,
+  parsePresetAgentFile,
+  applyPresetAgent,
+  MAX_PRESET_BODY_CHARS,
 } satisfies Record<string, unknown>;

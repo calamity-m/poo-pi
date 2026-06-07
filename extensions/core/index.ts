@@ -5,7 +5,7 @@ import { registerModels } from "./extensions/models.ts";
 import { registerPermissions } from "./extensions/permissions/index.ts";
 import { registerProxy } from "./extensions/proxy/index.ts";
 import { registerCoreSettings } from "./extensions/settings.ts";
-import { registerSubagents } from "./extensions/subagents.ts";
+import { registerSubagents } from "./extensions/subagents/index.ts";
 import { registerTls } from "./extensions/tls/index.ts";
 import { registerWebsearch } from "./extensions/websearch.ts";
 

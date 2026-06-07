@@ -78,6 +78,10 @@ The scripted subcommands remain available: `/core-settings show` always prints t
 
 The unified file currently contains permissions, non-secret TLS target metadata, and proxy audit redaction settings. TLS passphrases, certificate bytes, and private-key material are never persisted. Structured settings — permission rules, remembered grants, and the TLS target — are edited through their dedicated flows or the raw JSON editor, not as inline rows.
 
+## Preset subagents
+
+The core subagents extension can bundle named preset agents in `extensions/core/extensions/subagents/agents/*.md`. Each file uses simple frontmatter (`key: value` scalars only; no comments, lists, or nested YAML) plus a markdown body used as role text. Supported keys are `name`, `description`, `tier` (`fast`, `high`, or `any`), `tools` (`none`, `read-only`, or `coding`), and `outputFormat`; explicit `spawn_subagent` parameters override preset defaults. `tier: any` leaves model selection on the normal parent fallback path.
+
 ## Permissions extension
 
 The `core/extensions/permissions` extension gates every tool call through a policy engine. Use `/permissions` to view or change the active mode.
