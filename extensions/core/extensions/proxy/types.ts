@@ -42,9 +42,17 @@ export interface AuditRequest {
   upstreamUrl: string;
   /** Forwarded headers, with sensitive values redacted when the switch is `on`. */
   headers: Record<string, string>;
-  /** Request body as text, truncated to the audit body cap. */
+  /** Request body as text when it fits within the audit body cap. */
   body?: string;
-  /** Whether the audited body was truncated from a larger payload. */
+  /** First captured bytes of a larger request body, decoded as UTF-8 text. */
+  bodyHead?: string;
+  /** Last captured bytes of a larger request body, decoded as UTF-8 text. */
+  bodyTail?: string;
+  /** Original request body size in bytes, when a body was captured. */
+  bodyBytes?: number;
+  /** Bytes omitted between `bodyHead` and `bodyTail` for a larger request body. */
+  bodyOmittedBytes?: number;
+  /** Whether the audited body was captured as head/tail from a larger payload. */
   bodyTruncated?: boolean;
 }
 

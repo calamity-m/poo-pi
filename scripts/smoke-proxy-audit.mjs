@@ -11,7 +11,7 @@
 
 import { createServer } from "node:http";
 import { request as httpRequest } from "node:http";
-import { existsSync, mkdtempSync, readdirSync, rmSync } from "node:fs";
+import { existsSync, mkdtempSync, readFileSync, readdirSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -77,6 +77,23 @@ try {
     recordOff.request.headers.authorization === "secret-key",
     "authorization not logged raw when redaction off",
   );
+
+  // Large bodies keep both edges in the per-request file while the index stays compact.
+  await proxyRequest(state.port, {}, { model: "m3", prompt: `BEGIN${"x".repeat(140 * 1024)}END` });
+  const recordLarge = await waitForRecord(state, 3);
+  assert(recordLarge.request.bodyTruncated === true, "large index record not marked truncated");
+  assert(recordLarge.request.bodyBytes > 128 * 1024, "large index record missing byte count");
+  assert(recordLarge.request.bodyHead === undefined, "large index record should omit body head");
+  const largeFile = readdirSync(join(cwd, ".pi", "proxy-audit", "requests")).find((f) =>
+    f.includes("m3"),
+  );
+  assert(largeFile, "large audit file missing");
+  const largeRecord = JSON.parse(
+    readFileSync(join(cwd, ".pi", "proxy-audit", "requests", largeFile), "utf8"),
+  );
+  assert(largeRecord.request.bodyHead.includes("BEGIN"), "large audit body head missing");
+  assert(largeRecord.request.bodyTail.includes("END"), "large audit body tail missing");
+  assert(largeRecord.request.body === undefined, "large audit file should not store a prefix body");
 
   // The /core-settings UI flips redaction through a cwd-derived audit dir (no proxy
   // state needed), persisting to core-settings.json and reading back the same way.

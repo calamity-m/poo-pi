@@ -8,8 +8,10 @@ import {
 } from "../../config/persistence.ts";
 import type { AuditRecord, AuditResponse, ProxyState, RedactionMode } from "./types.ts";
 
-/** Maximum audited body size in bytes; larger request bodies are truncated, not written whole. */
-const MAX_AUDIT_BODY = 64 * 1024;
+/** Bytes kept from each edge of a large audited request body. */
+const AUDIT_BODY_EDGE_BYTES = 64 * 1024;
+/** Largest request body stored as one whole decoded string. */
+const MAX_WHOLE_AUDIT_BODY = AUDIT_BODY_EDGE_BYTES * 2;
 /** How many recent audit records to keep in memory for fast status reads. */
 const RECENT_LIMIT = 50;
 /** How many recent write failures to retain for status. */
@@ -98,12 +100,11 @@ export interface AuditInput {
 
 /**
  * Build an audit record, applying header redaction when the switch is `on` and
- * truncating the body to {@link MAX_AUDIT_BODY}. The model id is parsed from the
- * request body when present.
+ * capturing large request bodies as head/tail slices. The model id is parsed from
+ * the request body when present.
  */
 export function buildAuditRecord(input: AuditInput): AuditRecord {
   const bodyText = input.body?.toString("utf8");
-  const truncated = bodyText !== undefined && Buffer.byteLength(bodyText) > MAX_AUDIT_BODY;
   return {
     id: input.id,
     timestamp: new Date().toISOString(),
@@ -114,8 +115,7 @@ export function buildAuditRecord(input: AuditInput): AuditRecord {
       url: input.url,
       upstreamUrl: input.upstreamUrl,
       headers: normalizeHeaders(input.headers, input.mode),
-      body: truncated ? bodyText!.slice(0, MAX_AUDIT_BODY) : bodyText,
-      bodyTruncated: truncated || undefined,
+      ...captureBody(input.body),
     },
     response: input.response,
   };
@@ -138,7 +138,7 @@ export async function persistAuditRecord(state: ProxyState, record: AuditRecord)
   try {
     await writeFile(tmpPath, `${JSON.stringify(record, null, 2)}\n`, { mode: 0o600 });
     await rename(tmpPath, finalPath);
-    await appendFile(paths.indexPath, `${JSON.stringify(record)}\n`, { mode: 0o600 });
+    await appendFile(paths.indexPath, `${JSON.stringify(indexRecord(record))}\n`, { mode: 0o600 });
   } catch (error) {
     pushBounded(
       state.writeErrors,
@@ -181,6 +181,36 @@ function auditPathsForDir(dir: string): AuditPaths {
     requestsDir: join(dir, "requests"),
     indexPath: join(dir, "index.jsonl"),
   };
+}
+
+/** Build the body audit payload, preserving both edges when the body is large. */
+function captureBody(
+  body: Buffer | undefined,
+): Pick<
+  AuditRecord["request"],
+  "body" | "bodyHead" | "bodyTail" | "bodyBytes" | "bodyOmittedBytes" | "bodyTruncated"
+> {
+  if (!body) return {};
+  const bodyBytes = body.length;
+  if (bodyBytes <= MAX_WHOLE_AUDIT_BODY) return { body: body.toString("utf8"), bodyBytes };
+
+  return {
+    bodyHead: body.subarray(0, AUDIT_BODY_EDGE_BYTES).toString("utf8"),
+    bodyTail: body.subarray(bodyBytes - AUDIT_BODY_EDGE_BYTES).toString("utf8"),
+    bodyBytes,
+    bodyOmittedBytes: bodyBytes - MAX_WHOLE_AUDIT_BODY,
+    bodyTruncated: true,
+  };
+}
+
+/** Return a compact record for `index.jsonl`, omitting large body edge payloads. */
+function indexRecord(record: AuditRecord): AuditRecord {
+  if (!record.request.bodyTruncated) return record;
+  const request = { ...record.request };
+  delete request.body;
+  delete request.bodyHead;
+  delete request.bodyTail;
+  return { ...record, request };
 }
 
 /** Mask sensitive header values when redaction is `on`; otherwise pass everything through raw. */
