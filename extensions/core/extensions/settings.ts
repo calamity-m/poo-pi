@@ -17,7 +17,7 @@ import {
 import type { PermissionsController } from "./permissions/index.ts";
 import type { PermissionMode } from "./permissions/types.ts";
 import { auditPaths, writeRedactionMode } from "./proxy/audit.ts";
-import { showInlinePanel } from "./proxy/audit-panel.ts";
+import { showInlinePanel } from "../lib/ui/panel.ts";
 import type { RedactionMode } from "./proxy/types.ts";
 import type { ClientTlsController } from "./tls/index.ts";
 

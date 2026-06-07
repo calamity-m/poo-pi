@@ -1,0 +1,370 @@
+import { basename } from "node:path";
+
+import type {
+  ExtensionAPI,
+  ExtensionCommandContext,
+  ExtensionContext,
+} from "@earendil-works/pi-coding-agent";
+import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
+
+import type { PermissionsController } from "./permissions/index.ts";
+import type { ProxyReadinessHandle } from "./proxy/index.ts";
+import type { SubagentsController } from "./subagents/index.ts";
+import type { ClientTlsController } from "./tls/index.ts";
+
+/** Default footer template: a continuous powerline of live core-extension state. */
+const DEFAULT_TEMPLATE = "{permissions}{project}{subagents}{model}{branch}";
+
+/**
+ * Nerd-font glyphs labelling each segment, echoing the gruvbox-rainbow preset's
+ * icon-per-block aesthetic. Requires a patched (Nerd Font) terminal font.
+ */
+const GLYPHS = {
+  permissions: "", // shield
+  project: "", // folder
+  subagents: "", // users
+  model: "", // microchip
+  branch: "", // git branch
+  tls: "", // lock
+  proxy: "", // globe
+  status: "", // gear
+} as const;
+
+/** Powerline boundary glyphs: rounded opening cap and the solid right divider. */
+const POWERLINE = {
+  capLeft: "", //
+  divider: "", //
+} as const;
+
+/** User-facing command help for the core footer extension. */
+const HELP = [
+  "usage:",
+  "  /footer enable          enable the core status footer",
+  "  /footer disable         restore Pi's default footer",
+  "  /footer show            show the current footer template",
+  "  /footer set <template>  set the footer template",
+  "  /footer reset           restore the default template",
+  "",
+  "template tokens: {permissions}, {project}, {subagents}, {model}, {branch}, {statuses}, {tls}, {proxy}",
+].join("\n");
+
+/** Runtime controllers the footer reads to summarize core extension state. */
+export interface CoreFooterControllers {
+  /** Permissions live state controller. */
+  permissions: PermissionsController;
+  /** Client TLS live state controller. */
+  tls: ClientTlsController;
+  /** Provider proxy readiness/status handle. */
+  proxy: ProxyReadinessHandle;
+  /** Subagent live run status controller. */
+  subagents: SubagentsController;
+}
+
+/** Mutable footer state for the current extension runtime. */
+interface FooterState {
+  /** Whether this extension currently owns the footer renderer. */
+  enabled: boolean;
+  /** Template rendered by the core footer. */
+  template: string;
+}
+
+/** Register the core status footer and its `/footer` command. */
+export function registerCoreFooter(pi: ExtensionAPI, controllers: CoreFooterControllers): void {
+  const state: FooterState = {
+    enabled: true,
+    template: DEFAULT_TEMPLATE,
+  };
+
+  pi.on("session_start", (_event, ctx) => {
+    if (state.enabled) applyFooter(ctx, state, controllers);
+  });
+
+  pi.on("model_select", (_event, ctx) => {
+    if (state.enabled) applyFooter(ctx, state, controllers);
+  });
+
+  pi.registerCommand("footer", {
+    description: "Configure the core status footer",
+    handler: async (args, ctx) => {
+      await handleFooterCommand(ctx, state, controllers, args);
+    },
+  });
+}
+
+/** Handle `/footer` subcommands. */
+async function handleFooterCommand(
+  ctx: ExtensionCommandContext,
+  state: FooterState,
+  controllers: CoreFooterControllers,
+  args: string,
+): Promise<void> {
+  const trimmed = args.trim();
+  if (trimmed === "" || trimmed === "help") {
+    ctx.ui.notify(HELP, "info");
+    return;
+  }
+
+  const [command = "", ...rest] = trimmed.split(/\s+/);
+  const value = rest.join(" ").trim();
+
+  switch (command) {
+    case "enable":
+      state.enabled = true;
+      applyFooter(ctx, state, controllers);
+      ctx.ui.notify("Core status footer enabled", "info");
+      return;
+    case "disable":
+      state.enabled = false;
+      ctx.ui.setFooter(undefined);
+      ctx.ui.notify("Default footer restored", "info");
+      return;
+    case "show":
+      ctx.ui.notify(`footer template: ${state.template}`, "info");
+      return;
+    case "set":
+      if (value === "") {
+        ctx.ui.notify("usage: /footer set <template>", "warning");
+        return;
+      }
+      state.template = value;
+      state.enabled = true;
+      applyFooter(ctx, state, controllers);
+      ctx.ui.notify("Core status footer updated", "info");
+      return;
+    case "reset":
+      state.template = DEFAULT_TEMPLATE;
+      state.enabled = true;
+      applyFooter(ctx, state, controllers);
+      ctx.ui.notify("Core status footer reset", "info");
+      return;
+    default:
+      ctx.ui.notify(HELP, "warning");
+  }
+}
+
+/** Apply the current core footer renderer. */
+function applyFooter(
+  ctx: ExtensionContext,
+  state: FooterState,
+  controllers: CoreFooterControllers,
+): void {
+  ctx.ui.setFooter((tui, theme, footerData) => {
+    const unsubscribeBranch = footerData.onBranchChange(() => tui.requestRender());
+
+    return {
+      dispose: unsubscribeBranch,
+      invalidate() {},
+      render(width: number): string[] {
+        const rendered = renderFooter(
+          state.template,
+          buildSegments(ctx, controllers, footerData),
+          theme,
+        );
+        return [truncateToWidth(compactWhitespace(rendered), width)];
+      },
+    };
+  });
+}
+
+/** A single powerline block: a glyph, label/value, and its theme color tokens. */
+interface Segment {
+  /** Nerd-font glyph shown before the label. */
+  glyph: string;
+  /** Short segment label, e.g. `perm`. */
+  label: string;
+  /** Live value rendered after the label. */
+  value: string;
+  /** Foreground (text/glyph) theme color token. */
+  fg: string;
+  /** Background theme color token; also drives powerline blending. */
+  bg: string;
+}
+
+/** Build the per-token segment descriptors the powerline renderer consumes. */
+function buildSegments(
+  ctx: ExtensionContext,
+  controllers: CoreFooterControllers,
+  footerData: {
+    getGitBranch(): string | null;
+    getExtensionStatuses(): ReadonlyMap<string, string>;
+  },
+): Record<string, Segment[]> {
+  const tlsStatus = controllers.tls.statusLabel();
+  const proxyStatus = controllers.proxy.statusLabel();
+  const subagentStatus = controllers.subagents.statusLabel();
+
+  return {
+    permissions: [
+      {
+        glyph: GLYPHS.permissions,
+        label: "perm",
+        value: controllers.permissions.getMode(),
+        fg: "accent",
+        bg: "selectedBg",
+      },
+    ],
+    tls: [statusSegment(GLYPHS.tls, "tls", tlsStatus)],
+    proxy: [statusSegment(GLYPHS.proxy, "proxy", proxyStatus.replace(/^proxy:/, ""))],
+    project: [
+      {
+        glyph: GLYPHS.project,
+        label: "cwd",
+        value: projectLabel(ctx.cwd),
+        fg: "warning",
+        bg: "customMessageBg",
+      },
+    ],
+    subagents: [
+      {
+        glyph: GLYPHS.subagents,
+        label: "subagents",
+        value: subagentStatus?.replace(/^subagents:/, "") ?? "idle",
+        fg: subagentStatus ? "mdLink" : "muted",
+        bg: subagentStatus ? "toolPendingBg" : "customMessageBg",
+      },
+    ],
+    model: [
+      {
+        glyph: GLYPHS.model,
+        label: "model",
+        value: ctx.model?.id ?? "none",
+        fg: ctx.model ? "success" : "warning",
+        bg: ctx.model ? "toolSuccessBg" : "toolPendingBg",
+      },
+    ],
+    branch: [
+      {
+        glyph: GLYPHS.branch,
+        label: "git",
+        value: footerData.getGitBranch() ?? "none",
+        fg: "syntaxKeyword",
+        bg: "userMessageBg",
+      },
+    ],
+    statuses: formatStatuses(footerData.getExtensionStatuses()),
+  };
+}
+
+/** Return a compact project-location label for the current working directory. */
+function projectLabel(cwd: string): string {
+  return basename(cwd) || cwd;
+}
+
+/** Minimal theme surface used by this footer renderer. */
+interface FooterTheme {
+  /** Apply a named foreground color. */
+  fg(color: string, text: string): string;
+  /** Apply a named background color. */
+  bg(color: string, text: string): string;
+  /** Bold text. */
+  bold(text: string): string;
+  /** Return the raw background ANSI escape for a token (used for blending). */
+  getBgAnsi(color: string): string;
+}
+
+/** Render an ordered list of segments as one seamless powerline. */
+function renderPowerline(theme: FooterTheme, segments: Segment[]): string {
+  if (segments.length === 0) return "";
+  const out: string[] = [];
+  // Rounded opening cap drawn in the first segment's color over the terminal bg.
+  out.push(`${bgToFg(theme.getBgAnsi(segments[0].bg))}${POWERLINE.capLeft}\x1b[0m`);
+  segments.forEach((seg, index) => {
+    out.push(renderBody(theme, seg));
+    const next = segments[index + 1];
+    // The divider is this segment's bg color (as fg) over the next segment's bg,
+    // so adjacent blocks flow into one another. The final divider sits over the
+    // default terminal background.
+    const over = next ? theme.getBgAnsi(next.bg) : "\x1b[49m";
+    out.push(`${bgToFg(theme.getBgAnsi(seg.bg))}${over}${POWERLINE.divider}\x1b[0m`);
+  });
+  return out.join("");
+}
+
+/** Render a segment's filled body: glyph, bold label, and value. */
+function renderBody(theme: FooterTheme, seg: Segment): string {
+  return theme.bg(seg.bg, theme.fg(seg.fg, ` ${seg.glyph} ${theme.bold(seg.label)}:${seg.value} `));
+}
+
+/** Reuse a background ANSI escape as a foreground color for powerline dividers. */
+function bgToFg(bgAnsi: string): string {
+  return bgAnsi.replace("\x1b[48;", "\x1b[38;").replace("\x1b[49m", "\x1b[39m");
+}
+
+/** Build a status segment whose colors derive from its terse status value. */
+function statusSegment(glyph: string, label: string, status: string): Segment {
+  return { glyph, label, value: status, fg: statusColor(status), bg: statusBackground(status) };
+}
+
+/** Pick a foreground color token from a terse status value. */
+function statusColor(status: string): string {
+  if (status.includes("error")) return "error";
+  if (status.includes("loaded") || status.includes("route")) return "success";
+  if (status.includes("skipped") || status.includes("unconfigured") || status.includes("off"))
+    return "warning";
+  return "accent";
+}
+
+/** Pick a background color token from a terse status value. */
+function statusBackground(status: string): string {
+  if (status.includes("error")) return "toolErrorBg";
+  if (status.includes("loaded") || status.includes("route")) return "toolSuccessBg";
+  return "toolPendingBg";
+}
+
+/**
+ * Render a footer template into powerline text. Each `{token}` expands to its
+ * segments; runs of adjacent segments form one continuous powerline, while any
+ * literal text between tokens is emitted verbatim and breaks the run.
+ */
+function renderFooter(
+  template: string,
+  segmentsByToken: Record<string, Segment[]>,
+  theme: FooterTheme,
+): string {
+  const out: string[] = [];
+  let run: Segment[] = [];
+  const flush = () => {
+    if (run.length > 0) {
+      out.push(renderPowerline(theme, run));
+      run = [];
+    }
+  };
+  for (const part of template.split(/(\{[a-z]+\})/g)) {
+    if (part === "") continue;
+    const token = /^\{([a-z]+)\}$/.exec(part)?.[1];
+    const segments = token ? segmentsByToken[token] : undefined;
+    if (segments) {
+      run.push(...segments);
+    } else {
+      flush();
+      out.push(part);
+    }
+  }
+  flush();
+  return out.join("");
+}
+
+/** Map extension status entries to footer segments. */
+function formatStatuses(statuses: ReadonlyMap<string, string>): Segment[] {
+  return [...statuses.entries()].map(([key, value]) => ({
+    glyph: GLYPHS.status,
+    label: key,
+    value,
+    fg: "muted",
+    bg: "customMessageBg",
+  }));
+}
+
+/** Collapse empty token gaps while preserving deliberate separators. */
+function compactWhitespace(text: string): string {
+  return visibleWidth(text) === 0 ? "" : text.replace(/\s+/g, " ").trim();
+}
+
+/** Expose pure helpers for focused unit tests. */
+export const __footerForTest = {
+  renderFooter,
+  renderPowerline,
+  bgToFg,
+  GLYPHS,
+  POWERLINE,
+} satisfies Record<string, unknown>;

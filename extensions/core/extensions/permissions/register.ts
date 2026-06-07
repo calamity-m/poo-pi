@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { showInlinePanel } from "../proxy/audit-panel.ts";
+import { showInlinePanel } from "../../lib/ui/panel.ts";
 import {
   SAFE_ALLOW_TOOLS,
   TRUSTED_BASH_ALLOW_PATTERNS,

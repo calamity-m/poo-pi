@@ -16,6 +16,8 @@ export interface ProxyReadinessHandle {
   isActive(): boolean;
   /** Return whether a provider currently has a proxy route. */
   isProviderProxied(provider: string): boolean;
+  /** Compact status label for footer display. */
+  statusLabel(): string;
 }
 
 const PROXY_MEMORY_KEY = "__pooPiCoreProxyState";
@@ -52,12 +54,16 @@ export function registerProxy(
   const ensure = async (ctx: ExtensionContext): Promise<void> => {
     await startProxyServer(state, tlsProvider, ctx.cwd);
     await applyProviderOverrides(pi, ctx, state);
+    ctx.ui.setStatus("proxy", formatProxyStatusLabel(state));
   };
 
   // Both fire the idempotent ensure path; re-applying recovers already-proxied routes.
   pi.on("session_start", (_event, ctx) => ensure(ctx));
   pi.on("before_agent_start", (_event, ctx) => ensure(ctx));
-  pi.on("session_shutdown", () => stopProxyServer(state));
+  pi.on("session_shutdown", (_event, ctx) => {
+    ctx.ui.setStatus("proxy", undefined);
+    return stopProxyServer(state);
+  });
 
   registerProxyAuditCommand(pi, state);
   return {
@@ -65,5 +71,15 @@ export function registerProxy(
     isActive: () => state.port !== undefined,
     isProviderProxied: (provider) =>
       [...state.routes.values()].some((route) => route.provider === provider),
+    statusLabel: () => formatProxyStatusLabel(state),
   };
+}
+
+/** Format a terse proxy state summary for the core footer. */
+function formatProxyStatusLabel(state: ProxyState): string {
+  if (state.startError) return "proxy:error";
+  if (state.port === undefined) return "proxy:off";
+  const routeCount = state.routes.size;
+  const warningSuffix = state.warnings.length > 0 || state.unproxied.length > 0 ? "!" : "";
+  return `proxy:${routeCount} route${routeCount === 1 ? "" : "s"}${warningSuffix}`;
 }

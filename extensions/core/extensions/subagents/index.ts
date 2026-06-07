@@ -19,7 +19,7 @@ import { Type } from "typebox";
 
 import { readCoreSubagentSettings } from "../../config/persistence.ts";
 import type { ProxyReadinessHandle } from "../proxy/index.ts";
-import { showInlinePanel, TextPanel, type PanelTheme } from "../proxy/audit-panel.ts";
+import { showInlinePanel, TextPanel, type PanelTheme } from "../../lib/ui/panel.ts";
 import {
   loadPresetAgents,
   MAX_PRESET_BODY_CHARS,
@@ -78,6 +78,12 @@ interface RegisterSubagentsOptions {
   proxy?: ProxyReadinessHandle;
 }
 
+/** Live subagent status exposed to the core footer. */
+export interface SubagentsController {
+  /** Compact status label for active subagent work, or undefined when idle. */
+  statusLabel(): string | undefined;
+}
+
 interface SubagentRun {
   /** Stable display id for this in-memory run. */
   id: string;
@@ -123,7 +129,10 @@ interface SubagentModelSelection {
 }
 
 /** Register subagent spawning and visibility commands for the core extension bundle. */
-export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOptions = {}): void {
+export function registerSubagents(
+  pi: ExtensionAPI,
+  options: RegisterSubagentsOptions = {},
+): SubagentsController {
   const { presets, warnings } = loadPresetAgents(new URL("./agents/", import.meta.url));
   for (const warning of warnings) console.warn(warning);
   const presetGuidance = formatPresetGuidance(presets);
@@ -159,6 +168,10 @@ export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOp
       if (run) await showSubagentTranscript(ctx, run);
     },
   });
+
+  const controller: SubagentsController = {
+    statusLabel: () => formatSubagentsStatusLabel(runs),
+  };
 
   pi.registerTool({
     name: "spawn_subagent",
@@ -296,6 +309,8 @@ export function registerSubagents(pi: ExtensionAPI, options: RegisterSubagentsOp
       }
     },
   });
+
+  return controller;
 }
 
 /** Return markdown preset metadata as one description suffix for tool registration. */
@@ -511,6 +526,15 @@ function updateSubagentsUi(
       setClearWidgetTimer(undefined);
     }, 8000),
   );
+}
+
+/** Format active subagent state for the core footer. */
+function formatSubagentsStatusLabel(runs: SubagentRun[]): string | undefined {
+  const active = runs.filter((run) => run.status === "queued" || run.status === "running");
+  if (active.length === 0) return undefined;
+  const current = active[0];
+  const suffix = active.length === 1 ? current.currentActivity : `${active.length} running`;
+  return `subagents:${suffix}`;
 }
 
 /** Clear subagent UI decorations and timer. */

@@ -14,6 +14,7 @@ import {
 import type { PermissionMode, PermissionState } from "./types.ts";
 
 const PERMISSIONS_MEMORY_KEY = "__pooPiCorePermissionsState";
+const STATUS_KEY = "permissions";
 
 /**
  * Live controller over the process-global permission state, used by `/core-settings`
@@ -77,6 +78,7 @@ export function registerPermissions(pi: ExtensionAPI): PermissionsController {
     global.state.remembered = loaded.remembered;
     // Reset the degraded-notify flag on reload so fresh errors surface again
     global.notifiedRef[0] = false;
+    ctx.ui.setStatus(STATUS_KEY, `perm:${global.state.mode}`);
   };
 
   pi.on("session_start", (_event, ctx) => load(ctx));
@@ -87,7 +89,10 @@ export function registerPermissions(pi: ExtensionAPI): PermissionsController {
 
   return {
     getMode: () => global.state.mode,
-    setMode: (ctx, mode) => applyPermissionMode(ctx, global.state, mode),
+    setMode: async (ctx, mode) => {
+      await applyPermissionMode(ctx, global.state, mode);
+      ctx.ui.setStatus(STATUS_KEY, `perm:${global.state.mode}`);
+    },
     editConfig: (ctx) => editPermissionConfig(ctx, global.state),
   };
 }

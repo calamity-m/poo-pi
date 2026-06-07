@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { showPanel } from "./audit-panel.ts";
+import { showPanel } from "../../lib/ui/panel.ts";
 import { readRecentTail, writeRedactionMode } from "./audit.ts";
 import type { AuditRecord, ProxyState, RedactionMode } from "./types.ts";
 
