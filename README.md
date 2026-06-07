@@ -130,6 +130,22 @@ Direct `.env` path-tool targets are blocked in all modes. Override with an expli
 
 When `!hasUI` (print/RPC/automation), the extension always runs as `open` mode regardless of the persisted mode — write/bash/etc. are not gated.
 
+## Testing
+
+Run the full Node test suite, including smoke coverage:
+
+```bash
+npm test
+```
+
+Run only the smoke harness:
+
+```bash
+npm run test:smoke
+```
+
+The smoke harness regenerates TLS fixtures before running TLS-dependent checks. The targeted `npm run smoke:*` commands are still available for debugging individual scenarios; on a clean checkout, run `npm run fixtures:tls` first for TLS-dependent smoke commands.
+
 ## Validate
 
 ```bash
