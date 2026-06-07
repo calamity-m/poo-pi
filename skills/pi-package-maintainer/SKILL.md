@@ -32,4 +32,4 @@ pi install /absolute/path/to/package -l
 pi list
 ```
 
-Then start Pi and verify `/poo-pi`, bundled prompt commands, skill commands, and theme selection appear.
+Then start Pi and verify bundled extension commands, prompt commands, skill commands, and theme selection appear.

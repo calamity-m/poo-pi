@@ -97,7 +97,7 @@ There is no pre-commit config in this repo yet. If checks are repeatedly missed,
 ### Key directories
 
 ```text
-extensions/   -> Pi extension entry points; `poo-pi.ts` registers the package command/tool/status hook.
+extensions/   -> Pi extension entry points; `core/index.ts` registers the bundled core commands, tools, and hooks.
 extensions/core/ -> Packaged core extension subtree currently present as placeholder/empty TypeScript files.
 skills/       -> Agent skill directories; each skill is a directory with `SKILL.md` frontmatter.
 prompts/      -> Top-level Markdown prompt templates exposed as slash commands.
@@ -107,7 +107,7 @@ themes/       -> Pi theme JSON files included in the package manifest.
 ### Entry points
 
 ```text
-extensions/poo-pi.ts -> `pi -e ./extensions/poo-pi.ts --theme ./themes/poo-dark.json` for local extension/theme development.
+extensions/core/index.ts -> `pi -e ./extensions/core/index.ts --theme ./themes/poo-dark.json` for local extension/theme development.
 package.json         -> `npm run validate:json` and `npm run pack:dry-run` for validation/package smoke checks.
 ```
 
@@ -115,7 +115,7 @@ package.json         -> `npm run validate:json` and `npm run pack:dry-run` for v
 
 ```text
 package.json pi manifest -> Pi discovers extensions/, skills/, prompts/, themes/
-extensions/poo-pi.ts -> registers /poo-pi command + poo_pi_package_info tool -> reports bundled resource paths
+extensions/core/index.ts -> registers the packaged core extension features
 npm pack --dry-run -> package.json files list -> publishable tarball contents
 ```
 
@@ -125,7 +125,7 @@ npm pack --dry-run -> package.json files list -> publishable tarball contents
 - Prompt files are non-recursive: only top-level `prompts/*.md` become slash commands.
 - Skill names should stay lowercase kebab-case, and each skill directory must contain `SKILL.md` with useful frontmatter.
 - Theme JSON must keep the required Pi color-token shape; validate JSON before packaging.
-- `README.md` and `extensions/poo-pi.ts` currently mention `skills/surgical-refactor/SKILL.md`, but that path is not present; treat resource lists carefully when editing package metadata.
+- Treat package resource lists carefully when editing package metadata; prompt discovery is non-recursive and skills require a `SKILL.md` file.
 
 ---
 

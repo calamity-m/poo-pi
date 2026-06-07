@@ -24,7 +24,7 @@ pi install /absolute/path/to/poo-pi -l
 For development without installing:
 
 ```bash
-pi -e ./extensions/poo-pi.ts --theme ./themes/poo-dark.json
+pi -e ./extensions/core/index.ts --theme ./themes/poo-dark.json
 ```
 
 ## Package manifest
@@ -47,11 +47,9 @@ Pi discovers package resources from `package.json`:
 
 ```text
 extensions/
-  poo-pi.ts
   core/index.ts
 skills/
   pi-package-maintainer/SKILL.md
-  surgical-refactor/SKILL.md
 prompts/
   plan.md
   release-check.md
