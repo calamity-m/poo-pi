@@ -76,6 +76,12 @@ The scripted subcommands remain available: `/core-settings show` always prints t
 
 The unified file currently contains permissions, non-secret TLS target metadata, and proxy audit redaction settings. TLS passphrases, certificate bytes, and private-key material are never persisted. Structured settings — permission rules, remembered grants, and the TLS target — are edited through their dedicated flows or the raw JSON editor, not as inline rows.
 
+## Prompt filler
+
+Run `/prompt` to pick a discovered prompt template, fill supported variables, and place the expanded prompt in the editor for review. You can also start from a specific template with `/prompt <template> [args...]`; direct invocation still opens the fill UI so substitutions can be reviewed before sending.
+
+Supported placeholders are `$ARGUMENTS`, `$@`, `$1`, `$2`, ..., `${@:N}`, and `${@:N:L}`. Arguments use simple shell-like splitting with quotes and backslash escapes. Prompt frontmatter support is intentionally limited to simple one-line `key: value` strings such as `description` and `argument-hint`; malformed or unreadable templates are reported as warnings and skipped.
+
 ## Preset subagents
 
 The core subagents extension can bundle named preset agents in `extensions/core/extensions/subagents/agents/*.md`. Each file uses simple frontmatter (`key: value` scalars only; no comments, lists, or nested YAML) plus a markdown body used as role text. Supported keys are `name`, `description`, `tier` (`fast`, `high`, or `any`), `tools` (`none`, `read-only`, or `coding`), and `outputFormat`; explicit `spawn_subagent` parameters override preset defaults. `tier: any` leaves model selection on the normal parent fallback path.
