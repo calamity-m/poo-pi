@@ -3,7 +3,8 @@ import test from "node:test";
 
 import { __footerForTest } from "../extensions/core/extensions/footer.ts";
 
-const { renderFooter, renderPowerline, bgToFg, GLYPHS, POWERLINE } = __footerForTest;
+const { renderFooter, renderPowerline, bgToFg, GLYPHS, POWERLINE, formatFooterContextUsage } =
+  __footerForTest;
 
 /** Minimal truecolor theme stub mirroring the real Theme surface. */
 const theme = {
@@ -49,4 +50,15 @@ test("renderFooter keeps literal text outside the powerline run", () => {
 test("renderFooter ignores unknown tokens by emitting them verbatim", () => {
   const out = renderFooter("{nope}", {}, theme);
   assert.equal(out, "{nope}");
+});
+
+test("formatFooterContextUsage shows compact tokens and percent", () => {
+  assert.equal(
+    formatFooterContextUsage({ tokens: 50_000, contextWindow: 1_000_000, percent: 5 }, undefined),
+    "50k/1.0M 5%",
+  );
+});
+
+test("formatFooterContextUsage falls back to the model window when usage is unavailable", () => {
+  assert.equal(formatFooterContextUsage(undefined, 128_000), "?/128k ?");
 });

@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 
 import type {
+  ContextUsage,
   ExtensionAPI,
   ExtensionCommandContext,
   ExtensionContext,
@@ -13,7 +14,7 @@ import type { SubagentsController } from "./subagents/index.ts";
 import type { ClientTlsController } from "./tls/index.ts";
 
 /** Default footer template: a continuous powerline of live core-extension state. */
-const DEFAULT_TEMPLATE = "{permissions}{project}{subagents}{model}{branch}";
+const DEFAULT_TEMPLATE = "{permissions}{project}{subagents}{context}{model}{branch}";
 
 /**
  * Nerd-font glyphs labelling each segment, echoing the gruvbox-rainbow preset's
@@ -24,6 +25,7 @@ const GLYPHS = {
   project: "", // folder
   subagents: "", // users
   model: "", // microchip
+  context: "󰘚", // gauge
   branch: "", // git branch
   tls: "", // lock
   proxy: "", // globe
@@ -45,7 +47,7 @@ const HELP = [
   "  /footer set <template>  set the footer template",
   "  /footer reset           restore the default template",
   "",
-  "template tokens: {permissions}, {project}, {subagents}, {model}, {branch}, {statuses}, {tls}, {proxy}",
+  "template tokens: {permissions}, {project}, {subagents}, {context}, {model}, {branch}, {statuses}, {tls}, {proxy}",
 ].join("\n");
 
 /** Runtime controllers the footer reads to summarize core extension state. */
@@ -223,6 +225,7 @@ function buildSegments(
         bg: subagentStatus ? "toolPendingBg" : "customMessageBg",
       },
     ],
+    context: [contextSegment(ctx.getContextUsage(), ctx.model?.contextWindow)],
     model: [
       {
         glyph: GLYPHS.model,
@@ -248,6 +251,60 @@ function buildSegments(
 /** Return a compact project-location label for the current working directory. */
 function projectLabel(cwd: string): string {
   return basename(cwd) || cwd;
+}
+
+/** Build the compact current context-usage segment shown in the footer. */
+function contextSegment(usage: ContextUsage | undefined, modelWindow: number | undefined): Segment {
+  const percent = usage?.percent ?? null;
+  return {
+    glyph: GLYPHS.context,
+    label: "ctx",
+    value: formatFooterContextUsage(usage, modelWindow),
+    fg: contextColor(percent),
+    bg: contextBackground(percent),
+  };
+}
+
+/** Format live context usage as a terse token/window plus percent value. */
+function formatFooterContextUsage(
+  usage: ContextUsage | undefined,
+  modelWindow: number | undefined,
+): string {
+  const tokens = usage?.tokens ?? null;
+  const contextWindow = usage?.contextWindow ?? modelWindow ?? null;
+  const percent = usage?.percent ?? null;
+  return `${formatTokens(tokens)}/${formatTokens(contextWindow)} ${formatPercent(percent)}`;
+}
+
+/** Pick a context-usage foreground color by pressure level. */
+function contextColor(percent: number | null): string {
+  if (percent === null) return "warning";
+  if (percent >= 90) return "error";
+  if (percent >= 70) return "warning";
+  return "success";
+}
+
+/** Pick a context-usage background color by pressure level. */
+function contextBackground(percent: number | null): string {
+  if (percent === null) return "toolPendingBg";
+  if (percent >= 90) return "toolErrorBg";
+  if (percent >= 70) return "toolPendingBg";
+  return "toolSuccessBg";
+}
+
+/** Format percentages consistently for compact footer display. */
+function formatPercent(percent: number | null): string {
+  if (percent === null) return "?";
+  return `${percent < 10 && percent % 1 !== 0 ? percent.toFixed(1) : Math.round(percent)}%`;
+}
+
+/** Format token counts compactly for footer display. */
+function formatTokens(count: number | null): string {
+  if (count === null) return "?";
+  if (count < 1000) return String(Math.round(count));
+  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
+  if (count < 1000000) return `${Math.round(count / 1000)}k`;
+  return `${(count / 1000000).toFixed(1)}M`;
 }
 
 /** Minimal theme surface used by this footer renderer. */
@@ -367,4 +424,5 @@ export const __footerForTest = {
   bgToFg,
   GLYPHS,
   POWERLINE,
+  formatFooterContextUsage,
 } satisfies Record<string, unknown>;
