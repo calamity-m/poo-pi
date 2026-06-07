@@ -2,14 +2,14 @@
 
 ## Plan Overview
 
-Implement the TLS portion of core so Pi can load a password-protected PFX/P12 client certificate as the first core capability during startup, hold it only in process memory, and make it available to other core extensions through a safe getter/provider API. The user experience is part of the feature: when no usable saved location exists, interactive runs should guide the user through choosing the certificate file and entering the password with a hidden input, then persist only the location for next time. Done means local test certificates exist, TLS resolves during `session_start`, the core consumers (proxy and websearch) read the provider lazily at use-time and fail closed when TLS is unavailable, and no LLM-callable command or tool can reveal certificate bytes or passwords.
+Implement the TLS portion of core so Pi can load a password-protected PFX/P12 client certificate as the first core capability during startup, hold it only in process memory, and make it available to other core extensions through a safe getter/provider API. The user experience is part of the feature: when no usable saved location exists, interactive runs should guide the user through choosing the certificate file and entering the password with a hidden input, then persist only the location for next time. Done means local test certificates exist, TLS resolves during `session_start`, the proxy reads the provider lazily at use-time, and no LLM-callable command or tool can reveal certificate bytes or passwords.
 
 ## Risks
 
 - **Secret material exposure** — PFX bytes, passphrases, and derived TLS objects must never be logged, persisted, included in tool results, or made reachable from an LLM-callable tool. Keep certificate access in module-private state, expose only a minimal in-process API, and audit command/tool/status output for metadata-only behavior.
 - **Startup deadlock or unusable non-interactive mode** — Blocking startup on a TUI flow can hang print/JSON/RPC or headless runs. Gate interactive prompting on `ctx.hasUI`, provide a clear failure/status path when no UI is available, and add an explicit retry command for interactive correction without exposing secrets.
 - **Persistence scope mismatch** — Confirmed: `ExtensionAPI` exposes only `appendEntry()` (session-scoped persistence) and no project-level config/storage API, so a saved cert path cannot be remembered across sessions via Pi. The plan must use a small project-local config file holding only non-secret path/source metadata. Concrete hazard: that file (or a stray status line) could be committed to git and leak the certificate path — add it to `.gitignore` and treat the path as potentially sensitive.
-- **Lazy-read race / stale read** — Consumers read the provider lazily at use-time (chosen lifecycle), so the blocking-startup hazard is gone, but a consumer invoked before `session_start` resolves TLS would observe `unconfigured`. Mitigation: consumers must treat `getClientTls() === undefined` as fail-closed (not "proceed without mTLS"), the provider must expose a status the consumer can check, and a smoke check should prove a consumer reads loaded TLS after `session_start` and fails closed before it.
+- **Lazy-read race / stale read** — Consumers read the provider lazily at use-time (chosen lifecycle), so the blocking-startup hazard is gone, but a consumer invoked before `session_start` resolves TLS would observe `unconfigured`. Mitigation: the provider must expose a status consumers can check, and a smoke check should prove a consumer reads loaded TLS after `session_start`.
 - **PFX/Node load incompatibility** — OpenSSL 3.x writes `.p12`/`.pfx` with PBES2/AES by default, but older defaults (or `-legacy`) use RC2/3DES that Node's `crypto`/`tls` may reject with `mac verify failure` or `unsupported`. If the fixture-generation script (Deliverable 1) produces a bundle Node cannot decrypt, every dependent smoke check in D2/D4/D5 fails. Mitigation: the Deliverable 1 smoke check (Node loads the generated PFX with the known password) must pass before any dependent deliverable starts, and the generation script must pin an algorithm Node accepts.
 - **Undocumented security-sensitive flow** — TLS setup will include lifecycle ordering, custom TUI, secret handling, and future extension seams; if the code is under-documented, later changes can accidentally weaken guarantees. Require TSDoc on every function and targeted inline comments explaining why security/lifecycle choices exist.
 
@@ -88,8 +88,8 @@ Keep raw cert bytes and passphrases inside the source's load call stack where po
 - `extensions/core/extensions/tls/pfx-source.ts` — `pfx-file` source, PFX/P12 target chooser, passphrase validation, and `SecureContext` loading.
 - `extensions/core/extensions/tls/tui.ts` — Hidden passphrase prompt and masked input component.
 - `extensions/core/extensions/tls/persistence.ts` — Project-local non-secret `SourceTarget` persistence.
-- `extensions/core/index.ts` — Currently calls the no-arg placeholders `registerTls(pi)`, `registerProxy(pi)`, `registerWebsearch(pi)`. Needs to capture the provider from `registerTls(pi)` and thread it into `registerProxy`/`registerWebsearch` (lazy reads — no awaiting at registration).
-- `extensions/core/extensions/proxy/index.ts`, `extensions/core/extensions/websearch.ts` — No-arg placeholders that must take and consume the provider (Deliverable 6).
+- `extensions/core/index.ts` — Currently calls the no-arg placeholders `registerTls(pi)` and `registerProxy(pi)`. Needs to capture the provider from `registerTls(pi)` and thread it into `registerProxy` (lazy reads — no awaiting at registration).
+- `extensions/core/extensions/proxy/index.ts` — No-arg placeholder that must take and consume the provider (Deliverable 6).
 - `/home/calam/code/pi-shit/extensions/secret-input/index.ts` — Reference implementation for masked TUI input that avoids chat history and tool output.
 - `package.json` — May need scripts for generating local cert fixtures and validating package contents.
 - `test-fixtures/` or `fixtures/tls/` — Proposed location for generated local-only PFX/P12 files and generation script output; do not publish private keys unintentionally unless they are clearly test-only fixtures.
@@ -119,7 +119,6 @@ core(pi):
   registerSubagents(pi)
   registerProxy(pi, { tlsProvider })     // proxy reads tlsProvider lazily on request
   registerPermissions(pi)
-  registerWebsearch(pi, { tlsProvider }) // websearch reads tlsProvider lazily on request
 
 registerTls(pi):
   state = { status: "unconfigured" }
@@ -134,15 +133,8 @@ registerTls(pi):
   pi.registerCommand("tls-setup", metadataOnlyRetryHandler)
   return provider
 
-// Consumer contract: undefined / non-loaded TLS means FAIL CLOSED for websearch,
-// never "proceed without the client cert".
-// NOTE: the proxy consumer intentionally diverges — it attaches the cert when
-// loaded and forwards without it otherwise (never blocks). See docs/plans/proxy-bigplan.md.
-websearchRequest(tlsProvider, ...):
-  tls = tlsProvider.getClientTls()
-  if tls is undefined: fail closed with redacted status
-  else: use tls.secureContext for the outbound mTLS connection
-
+// Consumer contract: the proxy attaches the cert when loaded and forwards
+// without it otherwise (never blocks). See docs/plans/proxy-bigplan.md.
 resolveClientTls(ctx, registry, config, { force = false } = {}):
   // /tls-setup passes force=true to skip the fast path and re-run the wizard from stage 1.
   // Fast path: persisted choice skips stages 1 + 2 (unless forced).
@@ -229,22 +221,20 @@ Verify the feature satisfies the security promises: no LLM-callable path can pri
 - [x] Document accepted residual risks, especially any Node TLS API requirement that forces keeping raw options in memory.
 - [x] Review the implementation for documentation completeness: every function has TSDoc, and inline comments explain security-sensitive or lifecycle-sensitive logic without restating obvious code.
 
-### Deliverable 6. Consumer wiring (proxy and websearch)
+### Deliverable 6. Consumer wiring (proxy)
 
-Wire both core consumers to actually use the loaded client TLS, proving the provider is consumable end-to-end. Each consumer reads the provider lazily at request-time. **Websearch fails closed** when TLS is unavailable. **The proxy intentionally does not** — it attaches the cert opportunistically when loaded and forwards without it otherwise (never blocks traffic); see `docs/plans/proxy-bigplan.md` for that decision. This is the difference between "a provider exists" and "Pi can use a loaded client cert."
+Wire the proxy consumer to actually use the loaded client TLS, proving the provider is consumable end-to-end. The proxy reads the provider lazily at request-time, attaches the cert opportunistically when loaded, and forwards without it otherwise (never blocks traffic); see `docs/plans/proxy-bigplan.md` for that decision. This is the difference between "a provider exists" and "Pi can use a loaded client cert."
 
 - [x] `registerProxy(pi, { tlsProvider })` accepts the provider and attaches `getClientTls()`'s `SecureContext` to its outbound HTTPS leg when a cert is loaded, forwarding without it otherwise (implemented by proxy-bigplan; the proxy does **not** fail closed).
-- [ ] Update `registerWebsearch(pi, { tlsProvider })` to accept and store the provider, and apply the client TLS to its outbound requests.
-- [x] Define and document the fail-closed contract: when `getClientTls()` returns `undefined`, the consumer aborts with a redacted status rather than connecting without the cert.
-- [x] Add a smoke check that a consumer applies the loaded `SecureContext` after `session_start`, and fails closed before TLS resolves.
+- [x] Add a smoke check that a consumer applies the loaded `SecureContext` after `session_start`.
 
 ## Issues
 
-- **2026-06-02 — agent:claude (proxy reconciliation)** — The proxy consumer is now implemented (see `docs/plans/proxy-bigplan.md`) and deliberately **does not fail closed**: it attaches the client cert when loaded and forwards without it otherwise, so a missing/expired cert or a throwing TLS provider degrades to no-client-TLS rather than blocking LLM traffic. The Overview, the consumer-contract pseudo-code, and Deliverable 6 are updated so the fail-closed contract now applies to **websearch only**; the websearch fail-closed task is unchanged.
-- **2026-06-02 — agent:claude (implementation)** — Implemented D1-D4 and the available security/consumer smoke checks. Fingerprint exposure was dropped from the implementation and plan sketch, leaving no certificate fingerprint in redacted status until the open sensitivity question is resolved. Proxy/websearch currently have fail-closed TLS resolution helpers because the repo still has placeholder consumers with no outbound request implementation to attach a `SecureContext` to.
+- **2026-06-02 — agent:claude (proxy reconciliation)** — The proxy consumer is now implemented (see `docs/plans/proxy-bigplan.md`) and deliberately **does not fail closed**: it attaches the client cert when loaded and forwards without it otherwise, so a missing/expired cert or a throwing TLS provider degrades to no-client-TLS rather than blocking LLM traffic.
+- **2026-06-02 — agent:claude (implementation)** — Implemented D1-D4 and the available security/consumer smoke checks. Fingerprint exposure was dropped from the implementation and plan sketch, leaving no certificate fingerprint in redacted status until the open sensitivity question is resolved.
 - **2026-06-02 — user + agent:claude (design)** — Committed to a multi-source architecture as a planned, first-class part of the design (not just a future hook). Setup is now a 3-stage wizard (source picker → source-owned target chooser → optional passphrase), backed by a `ClientTlsSource` registry and an orthogonal `PassphraseProvider` seam. **Implementation scope is unchanged**: only the `pfx-file` source and the interactive passphrase provider are built this iteration; keyring/`pass`/PKCS#11 are documented seams, not deliverables. Stage 1 auto-skips with a single source so the PFX-only build stays a plain file-pick + password flow. Reshaped Target behavior, API shape, Gotchas, Pseudo-code, and Deliverables 2 & 3.
 - **2026-06-02 — agent:claude** — Open question (deferred): does PKCS#11/HSM (non-exportable hardware-backed keys) ever come into scope? If yes, the provider must return an opaque connect handle (e.g. configured `https.Agent`) instead of `secureContext: SecureContext`, since an HSM key cannot build a SecureContext from in-process bytes. Resolve before Deliverable 2 freezes the loaded-state return type.
-- **2026-06-02 — agent:claude (adversarial review #2)** — Plan reviewed again by 2 adversarial sub-agents (Risks & Assumptions, Completeness & Scope) against the live repo. ~10 findings; merged. Key changes: added Deliverable 6 (wire proxy + websearch to consume the provider), committed to a lazy-consumer-read lifecycle (resolving the `await`-vs-`session_start` contradiction), confirmed no project-level config API exists (cert path persists via a project-local config file), added the OpenSSL/Node PFX-encryption risk, defined the missing `LoadedClientTls`/`RedactedClientTlsStatus` types as a task, and required vendoring the external `secret-input` masking primitive into the repo.
+- **2026-06-02 — agent:claude (adversarial review #2)** — Plan reviewed again by 2 adversarial sub-agents (Risks & Assumptions, Completeness & Scope) against the live repo. ~10 findings; merged. Key changes: added Deliverable 6 (wire proxy to consume the provider), committed to a lazy-consumer-read lifecycle (resolving the `await`-vs-`session_start` contradiction), confirmed no project-level config API exists (cert path persists via a project-local config file), added the OpenSSL/Node PFX-encryption risk, defined the missing `LoadedClientTls`/`RedactedClientTlsStatus` types as a task, and required vendoring the external `secret-input` masking primitive into the repo.
 - **2026-06-02 — agent:claude** — Open question (deferred): is a certificate fingerprint considered non-secret in this environment? The `ClientTlsState.metadata.fingerprint` field is exposed in redacted status, and no deliverable currently computes it. Confirm it is safe to surface (and add a compute task) or drop the field before Deliverable 2 ships the type. Paths are already treated as potentially sensitive, so fingerprint sensitivity is not a given.
 - **2026-06-02 — agent:claude** — Added documentation as a first-class implementation requirement: every function should have TSDoc, and inline comments should explain security-sensitive or lifecycle-sensitive decisions.
 - **2026-06-02 — agent:claude (adversarial review)** — Plan reviewed from Risks & Assumptions and Completeness & Scope perspectives. 4 findings; 4 merged into plan. Main changes: added non-interactive fail-closed behavior, clarified persistence-scope risk, made load-order verification explicit, and added security validation tasks.

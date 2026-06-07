@@ -9,16 +9,13 @@ import {
   validateCoreSettings,
   writeCoreClientTlsSkip,
 } from "../extensions/core/config/persistence.ts";
-import { requireWebsearchClientTls } from "../extensions/core/extensions/websearch.ts";
 
 const unloadedProvider = {
   getClientTls: () => undefined,
   getClientTlsStatus: () => ({ status: "unconfigured", message: "tls: unconfigured" }),
 };
 
-// Websearch fails closed without a cert; the proxy attaches opportunistically and never blocks.
-if (requireWebsearchClientTls(unloadedProvider).ok)
-  throw new Error("websearch did not fail closed before TLS load");
+// The proxy attaches client TLS opportunistically and never blocks.
 if (resolveProxyClientTls(unloadedProvider) !== undefined)
   throw new Error("proxy should resolve no client TLS before a cert is loaded");
 
@@ -47,10 +44,6 @@ const loadedProvider = {
     message: "tls: loaded",
   }),
 };
-
-const websearchLoaded = requireWebsearchClientTls(loadedProvider);
-if (!websearchLoaded.ok || !websearchLoaded.tls.secureContext)
-  throw new Error("websearch did not read loaded TLS");
 
 const proxyLoaded = resolveProxyClientTls(loadedProvider);
 if (!proxyLoaded?.secureContext) throw new Error("proxy did not read loaded TLS");

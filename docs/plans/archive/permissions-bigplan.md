@@ -71,7 +71,7 @@ One project-local JSON file, `.pi/core-permissions.json` (gitignored; `.pi/` is 
 
 - Path tools (`read`/`write`/`edit`/`ls`/`find`/`grep`): target = the resolved absolute real path from `event.input` (e.g. `path`, `file_path`). `.env` check = basename is `.env` or starts with `.env.` (but `.env.example` is matched by an allow rule, not special-cased).
 - `bash`: target = `event.input.command` string, matched against the regex sets.
-- Everything else (custom tools — `websearch`, `models`, `proxy-audit`, etc.): treated as "other" — `safe`/`trusted` → ask, `open` → allow. No path/bash semantics.
+- Everything else (custom tools — `models`, `proxy-audit`, etc.): treated as "other" — `safe`/`trusted` → ask, `open` → allow. No path/bash semantics.
 
 ### Critical Files
 

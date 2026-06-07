@@ -202,7 +202,7 @@ console.log("\n3. safe mode");
     "safe: bash → ask",
   );
   assertEqual(
-    decide("safe", state.rules, state.remembered, "websearch", otherTarget("websearch"), CWD),
+    decide("safe", state.rules, state.remembered, "custom-tool", otherTarget("custom-tool"), CWD),
     "ask",
     "safe: custom tool → ask",
   );
@@ -350,7 +350,14 @@ console.log("\n4. trusted mode");
 
   // Custom tool → ask
   assertEqual(
-    decide("trusted", state.rules, state.remembered, "websearch", otherTarget("websearch"), CWD),
+    decide(
+      "trusted",
+      state.rules,
+      state.remembered,
+      "custom-tool",
+      otherTarget("custom-tool"),
+      CWD,
+    ),
     "ask",
     "trusted: custom tool → ask",
   );

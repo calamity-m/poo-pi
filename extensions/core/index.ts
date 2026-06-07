@@ -7,7 +7,6 @@ import { registerProxy } from "./extensions/proxy/index.ts";
 import { registerCoreSettings } from "./extensions/settings.ts";
 import { registerSubagents } from "./extensions/subagents/index.ts";
 import { registerTls } from "./extensions/tls/index.ts";
-import { registerWebsearch } from "./extensions/websearch.ts";
 
 /**
  * Loads the core extension bundle without enabling any core capabilities yet.
@@ -22,5 +21,4 @@ export default function core(pi: ExtensionAPI) {
   registerSubagents(pi, { proxy });
   const permissions = registerPermissions(pi);
   registerCoreSettings(pi, { permissions, tls });
-  registerWebsearch(pi, { tlsProvider: tls });
 }
