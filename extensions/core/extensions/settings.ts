@@ -16,6 +16,7 @@ import {
   writeCoreSettings,
   writeGlobalCoreSubagentSettings,
 } from "../config/persistence.ts";
+import type { CoreFooterController } from "./footer.ts";
 import type { PermissionsController } from "./permissions/index.ts";
 import type { PermissionMode } from "./permissions/types.ts";
 import { auditPaths, writeRedactionMode } from "./proxy/audit.ts";
@@ -29,6 +30,8 @@ export interface CoreSettingsControllers {
   permissions: PermissionsController;
   /** Client TLS controller (secret-safe setup flow + redacted status). */
   tls: ClientTlsController;
+  /** Footer live state controller (enabled flag + template). */
+  footer: CoreFooterController;
 }
 
 /** Permission modes offered as a cycling row in the settings UI. */
@@ -150,6 +153,7 @@ async function openCoreSettingsSelector(
     const tlsSkipped = await readCoreClientTlsSkip(ctx.cwd);
     const subagents = await readGlobalCoreSubagentSettings();
     const historySearch = await readCoreHistorySearchSettings(ctx.cwd);
+    const footer = controllers.footer.getSettings();
 
     const result = await ctx.ui.custom<SelectorResult>((_tui, theme, _kb, done) => {
       const items: SettingItem[] = [
@@ -194,6 +198,20 @@ async function openCoreSettingsSelector(
           "History search shortcut",
           historySearch?.shortcut ?? DEFAULT_HISTORY_SEARCH_SHORTCUT,
           "Configure the user-message history search shortcut. Applies after /reload.",
+          done,
+        ),
+        {
+          id: "footer-enabled",
+          label: "Footer enabled",
+          description: "Show the core status footer instead of Pi's default footer.",
+          currentValue: footer.enabled ? "on" : "off",
+          values: ["on", "off"],
+        },
+        actionItem(
+          "footer-template",
+          "Footer template",
+          footer.template,
+          "Edit the core status footer token template.",
           done,
         ),
         actionItem(
@@ -297,6 +315,11 @@ async function applyChange(
         : "tls: skip disabled — setup runs on next startup",
       "info",
     );
+    return;
+  }
+  if (id === "footer-enabled") {
+    await controllers.footer.setEnabled(ctx, value === "on");
+    ctx.ui.notify(value === "on" ? "footer: enabled" : "footer: disabled", "info");
   }
 }
 
@@ -322,9 +345,37 @@ async function runAction(
     await configureSubagentTier(ctx, id === "subagents-fast" ? "fast" : "high");
     return;
   }
+  if (id === "footer-template") {
+    await configureFooterTemplate(ctx, controllers.footer);
+    return;
+  }
   if (id === "json-edit") {
     await editSettings(ctx);
   }
+}
+
+/** Prompt for the footer template and persist it through the unified settings file. */
+async function configureFooterTemplate(
+  ctx: ExtensionCommandContext,
+  footer: CoreFooterController,
+): Promise<void> {
+  if (!ctx.hasUI) {
+    ctx.ui.notify("use /core-settings edit to change the footer", "info");
+    return;
+  }
+
+  const edited = await ctx.ui.editor("Edit footer template", `${footer.getSettings().template}\n`);
+  const template = edited?.trim();
+  if (!template) return;
+
+  const validated = validateCoreSettings({ version: 1, footer: { template } });
+  if (typeof validated === "string") {
+    ctx.ui.notify(`[core-settings] footer template rejected — ${validated}`, "error");
+    return;
+  }
+
+  await footer.setTemplate(ctx, template);
+  ctx.ui.notify("[core-settings] footer template updated", "info");
 }
 
 /** Prompt for the history search shortcut and persist it through the unified settings file. */

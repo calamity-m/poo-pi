@@ -33,6 +33,16 @@ test("parseCoreSettings retains history search shortcut", () => {
   );
 });
 
+test("parseCoreSettings retains footer config", () => {
+  assert.deepEqual(
+    parseCoreSettings({
+      version: 1,
+      footer: { enabled: false, template: "{model} │ {branch}" },
+    })?.footer,
+    { enabled: false, template: "{model} │ {branch}" },
+  );
+});
+
 test("validateSubagentSection rejects unsupported tier names", () => {
   assert.match(validateSubagentSection({ default: { model: "p/m" } }), /not supported/);
 });
@@ -55,6 +65,11 @@ test("validateCoreSettings rejects invalid history search shortcut", () => {
   );
 });
 
+test("validateCoreSettings rejects invalid footer config", () => {
+  assert.match(validateCoreSettings({ version: 1, footer: { enabled: "yes" } }), /footer/);
+  assert.match(validateCoreSettings({ version: 1, footer: { template: "" } }), /footer/);
+});
+
 test("validateCoreSettings returns normalized settings with subagents", () => {
   const result = validateCoreSettings({ version: 1, subagents: validSubagents });
   assert.notEqual(typeof result, "string");
@@ -68,10 +83,12 @@ test("subagents survive a write round trip with other settings", async () => {
       version: 1,
       proxy: { audit: { redact: "off" } },
       subagents: validSubagents,
+      footer: { enabled: false, template: "{model}" },
     });
     const settings = await readCoreSettings(cwd);
     assert.deepEqual(settings.subagents, validSubagents);
     assert.deepEqual(settings.proxy, { audit: { redact: "off" } });
+    assert.deepEqual(settings.footer, { enabled: false, template: "{model}" });
   } finally {
     await rm(cwd, { recursive: true, force: true });
   }

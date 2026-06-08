@@ -13,7 +13,12 @@ import type {
 import type { SourceTarget } from "../extensions/tls/types.ts";
 import { createDefaultCoreSettings } from "./defaults.ts";
 import { coreSettingsPath, cwdFromProxyAuditDir, globalCoreSettingsPath } from "./paths.ts";
-import type { CoreHistorySearchSettings, CoreSettings, CoreSubagentSettings } from "./types.ts";
+import type {
+  CoreFooterSettings,
+  CoreHistorySearchSettings,
+  CoreSettings,
+  CoreSubagentSettings,
+} from "./types.ts";
 
 /** Read unified core settings from `.pi/core-settings.json`, returning defaults when absent or malformed. */
 export async function readCoreSettings(cwd: string): Promise<CoreSettings> {
@@ -151,6 +156,21 @@ export async function writeCoreHistorySearchSettings(
   await writeCoreSettings(cwd, settings);
 }
 
+/** Read footer settings from unified core settings. */
+export async function readCoreFooterSettings(cwd: string): Promise<CoreFooterSettings | undefined> {
+  return (await readCoreSettings(cwd)).footer;
+}
+
+/** Persist footer settings without disturbing other core settings sections. */
+export async function writeCoreFooterSettings(
+  cwd: string,
+  footer: CoreFooterSettings,
+): Promise<void> {
+  const settings = await readCoreSettings(cwd);
+  settings.footer = footer;
+  await writeCoreSettings(cwd, settings);
+}
+
 /** Read user-scoped subagent tier settings from global core settings. */
 export async function readGlobalCoreSubagentSettings(): Promise<CoreSubagentSettings | undefined> {
   return (await readGlobalCoreSettings()).subagents;
@@ -176,6 +196,8 @@ export function validateCoreSettings(value: unknown): CoreSettings | string {
   if (proxyError) return proxyError;
   const subagentsError = validateSubagentSection(value["subagents"]);
   if (subagentsError) return subagentsError;
+  const footerError = validateFooterSection(value["footer"]);
+  if (footerError) return footerError;
   const historySearchError = validateHistorySearchSection(value["historySearch"]);
   if (historySearchError) return historySearchError;
   return parseCoreSettings(value) ?? createDefaultCoreSettings();
@@ -201,6 +223,9 @@ export function parseCoreSettings(value: unknown): CoreSettings | undefined {
 
   const historySearch = parseHistorySearchSettings(raw["historySearch"]);
   if (historySearch) out.historySearch = historySearch;
+
+  const footer = parseFooterSettings(raw["footer"]);
+  if (footer) out.footer = footer;
 
   return out;
 }
@@ -275,6 +300,20 @@ function validateHistorySearchSection(value: unknown): string | undefined {
   return undefined;
 }
 
+/** Validate the footer section when present in edited core settings. */
+function validateFooterSection(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return '"footer" must be an object';
+  if (value["enabled"] !== undefined && typeof value["enabled"] !== "boolean") {
+    return '"footer.enabled" must be a boolean';
+  }
+  const template = value["template"];
+  if (template !== undefined && (typeof template !== "string" || template.trim() === "")) {
+    return '"footer.template" must be a non-empty string';
+  }
+  return undefined;
+}
+
 /** Validate the subagents section when present in edited core settings. */
 export function validateSubagentSection(value: unknown): string | undefined {
   if (value === undefined) return undefined;
@@ -300,6 +339,18 @@ function parseHistorySearchSettings(value: unknown): CoreHistorySearchSettings |
   const shortcut = value["shortcut"];
   if (!isKeyboardShortcut(shortcut)) return undefined;
   return { shortcut: shortcut.trim() };
+}
+
+/** Parse footer settings, dropping invalid fields. */
+function parseFooterSettings(value: unknown): CoreFooterSettings | undefined {
+  if (!isRecord(value)) return undefined;
+  const enabled = typeof value["enabled"] === "boolean" ? value["enabled"] : undefined;
+  const template =
+    typeof value["template"] === "string" && value["template"].trim() !== ""
+      ? value["template"]
+      : undefined;
+  if (enabled === undefined && template === undefined) return undefined;
+  return { ...(enabled !== undefined ? { enabled } : {}), ...(template ? { template } : {}) };
 }
 
 /** Parse the permissions section without compiling regexes. */

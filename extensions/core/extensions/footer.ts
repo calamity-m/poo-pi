@@ -8,6 +8,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
+import { readCoreFooterSettings, writeCoreFooterSettings } from "../config/persistence.ts";
+import type { CoreFooterSettings } from "../config/types.ts";
 import { formatPercent, formatTokens } from "../lib/format.ts";
 import { clearLinkedWorktreeCache, resolveLinkedWorktree } from "../lib/worktree.ts";
 import type { PermissionsController } from "./permissions/index.ts";
@@ -51,18 +53,6 @@ const POWERLINE = {
   divider: "", //
 } as const;
 
-/** User-facing command help for the core footer extension. */
-const HELP = [
-  "usage:",
-  "  /footer enable          enable the core status footer",
-  "  /footer disable         restore Pi's default footer",
-  "  /footer show            show the current footer template",
-  "  /footer set <template>  set the footer template",
-  "  /footer reset           restore the default template",
-  "",
-  "template tokens: {permissions}, {project}, {subagents}, {context}, {model}, {worktree}, {branch}, {statuses}, {tls}, {proxy}",
-].join("\n");
-
 /** Runtime controllers the footer reads to summarize core extension state. */
 export interface CoreFooterControllers {
   /** Permissions live state controller. */
@@ -83,78 +73,74 @@ interface FooterState {
   template: string;
 }
 
-/** Register the core status footer and its `/footer` command. */
-export function registerCoreFooter(pi: ExtensionAPI, controllers: CoreFooterControllers): void {
+/** Runtime controller used by `/core-settings` to mutate footer config live. */
+export interface CoreFooterController {
+  /** Return the current runtime footer settings. */
+  getSettings(): Required<CoreFooterSettings>;
+  /** Enable or disable the core footer and persist the choice. */
+  setEnabled(ctx: ExtensionCommandContext, enabled: boolean): Promise<void>;
+  /** Set the core footer template, enable the footer, and persist both. */
+  setTemplate(ctx: ExtensionCommandContext, template: string): Promise<void>;
+}
+
+/** Register the core status footer and expose its runtime settings controller. */
+export function registerCoreFooter(
+  pi: ExtensionAPI,
+  controllers: CoreFooterControllers,
+): CoreFooterController {
   const state: FooterState = {
     enabled: true,
     template: DEFAULT_TEMPLATE,
   };
 
   pi.on("session_start", (_event, ctx) => {
-    if (state.enabled) applyFooter(ctx, state, controllers);
+    void reloadFooterSettings(ctx.cwd, state).then(() => {
+      if (state.enabled) {
+        applyFooter(ctx, state, controllers);
+      } else {
+        ctx.ui.setFooter(undefined);
+      }
+    });
   });
 
   pi.on("model_select", (_event, ctx) => {
     if (state.enabled) applyFooter(ctx, state, controllers);
   });
 
-  pi.registerCommand("footer", {
-    description: "Configure the core status footer",
-    handler: async (args, ctx) => {
-      await handleFooterCommand(ctx, state, controllers, args);
+  return {
+    getSettings: () => ({ enabled: state.enabled, template: state.template }),
+    setEnabled: async (ctx, enabled) => {
+      state.enabled = enabled;
+      await persistFooterSettings(ctx.cwd, state);
+      if (state.enabled) {
+        applyFooter(ctx, state, controllers);
+      } else {
+        ctx.ui.setFooter(undefined);
+      }
     },
-  });
+    setTemplate: async (ctx, template) => {
+      state.template = template;
+      state.enabled = true;
+      await persistFooterSettings(ctx.cwd, state);
+      applyFooter(ctx, state, controllers);
+    },
+  };
 }
 
-/** Handle `/footer` subcommands. */
-async function handleFooterCommand(
-  ctx: ExtensionCommandContext,
-  state: FooterState,
-  controllers: CoreFooterControllers,
-  args: string,
-): Promise<void> {
-  const trimmed = args.trim();
-  if (trimmed === "" || trimmed === "help") {
-    ctx.ui.notify(HELP, "info");
-    return;
-  }
+/** Reload persisted footer settings into the runtime footer state. */
+async function reloadFooterSettings(cwd: string, state: FooterState): Promise<void> {
+  applyFooterSettings(state, await readCoreFooterSettings(cwd));
+}
 
-  const [command = "", ...rest] = trimmed.split(/\s+/);
-  const value = rest.join(" ").trim();
+/** Persist the runtime footer state through unified core settings. */
+async function persistFooterSettings(cwd: string, state: FooterState): Promise<void> {
+  await writeCoreFooterSettings(cwd, { enabled: state.enabled, template: state.template });
+}
 
-  switch (command) {
-    case "enable":
-      state.enabled = true;
-      applyFooter(ctx, state, controllers);
-      ctx.ui.notify("Core status footer enabled", "info");
-      return;
-    case "disable":
-      state.enabled = false;
-      ctx.ui.setFooter(undefined);
-      ctx.ui.notify("Default footer restored", "info");
-      return;
-    case "show":
-      ctx.ui.notify(`footer template: ${state.template}`, "info");
-      return;
-    case "set":
-      if (value === "") {
-        ctx.ui.notify("usage: /footer set <template>", "warning");
-        return;
-      }
-      state.template = value;
-      state.enabled = true;
-      applyFooter(ctx, state, controllers);
-      ctx.ui.notify("Core status footer updated", "info");
-      return;
-    case "reset":
-      state.template = DEFAULT_TEMPLATE;
-      state.enabled = true;
-      applyFooter(ctx, state, controllers);
-      ctx.ui.notify("Core status footer reset", "info");
-      return;
-    default:
-      ctx.ui.notify(HELP, "warning");
-  }
+/** Apply persisted footer settings, falling back to built-in defaults. */
+function applyFooterSettings(state: FooterState, settings: CoreFooterSettings | undefined): void {
+  state.enabled = settings?.enabled ?? true;
+  state.template = settings?.template ?? DEFAULT_TEMPLATE;
 }
 
 /** Apply the current core footer renderer. */

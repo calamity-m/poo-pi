@@ -38,6 +38,6 @@ export default function core(pi: ExtensionAPI) {
   registerWorktree(pi);
   registerWorktreeContext(pi);
   const permissions = registerPermissions(pi);
-  registerCoreSettings(pi, { permissions, tls });
-  registerCoreFooter(pi, { permissions, tls, proxy, subagents });
+  const footer = registerCoreFooter(pi, { permissions, tls, proxy, subagents });
+  registerCoreSettings(pi, { permissions, tls, footer });
 }

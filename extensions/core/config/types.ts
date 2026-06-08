@@ -46,6 +46,14 @@ export interface CoreHistorySearchSettings {
   shortcut?: string;
 }
 
+/** Footer settings persisted by core. */
+export interface CoreFooterSettings {
+  /** Whether the core status footer should replace Pi's default footer. */
+  enabled?: boolean;
+  /** Template rendered by the core status footer. */
+  template?: string;
+}
+
 /** Unified project-local settings for the poo-pi core extension bundle. */
 export interface CoreSettings {
   /** Settings schema version. */
@@ -60,4 +68,6 @@ export interface CoreSettings {
   subagents?: CoreSubagentSettings;
   /** User-message history search settings. */
   historySearch?: CoreHistorySearchSettings;
+  /** Core status footer settings. */
+  footer?: CoreFooterSettings;
 }
