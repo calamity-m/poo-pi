@@ -61,7 +61,7 @@ New branch from a start point, in another repository:
 
 ### Settings
 
-`worktrees.root` lives in the project-local `.pi/core-settings.json` and is edited through `/core-settings edit`:
+`worktrees.root` lives in the project-local `.pi/core-settings.json`. Edit it through the **Managed worktree root** row in `/core-settings`, or directly through `/core-settings edit`:
 
 ```json
 {

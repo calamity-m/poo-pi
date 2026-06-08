@@ -179,6 +179,16 @@ export async function readCoreWorktreeSettings(
   return (await readCoreSettings(cwd)).worktrees;
 }
 
+/** Persist managed worktree settings without disturbing other core settings sections. */
+export async function writeCoreWorktreeSettings(
+  cwd: string,
+  worktrees: CoreWorktreeSettings,
+): Promise<void> {
+  const settings = await readCoreSettings(cwd);
+  settings.worktrees = worktrees;
+  await writeCoreSettings(cwd, settings);
+}
+
 /** Read user-scoped subagent tier settings from global core settings. */
 export async function readGlobalCoreSubagentSettings(): Promise<CoreSubagentSettings | undefined> {
   return (await readGlobalCoreSettings()).subagents;

@@ -9,13 +9,16 @@ import {
   readCoreHistorySearchSettings,
   readCoreProxyRedactionMode,
   readCoreSettings,
+  readCoreWorktreeSettings,
   readGlobalCoreSubagentSettings,
   validateCoreSettings,
   writeCoreClientTlsSkip,
   writeCoreHistorySearchSettings,
   writeCoreSettings,
+  writeCoreWorktreeSettings,
   writeGlobalCoreSubagentSettings,
 } from "../config/persistence.ts";
+import { DEFAULT_MANAGED_ROOT } from "./worktree/path-policy.ts";
 import type { CoreFooterController } from "./footer.ts";
 import type { PermissionsController } from "./permissions/index.ts";
 import type { PermissionMode } from "./permissions/types.ts";
@@ -153,6 +156,7 @@ async function openCoreSettingsSelector(
     const tlsSkipped = await readCoreClientTlsSkip(ctx.cwd);
     const subagents = await readGlobalCoreSubagentSettings();
     const historySearch = await readCoreHistorySearchSettings(ctx.cwd);
+    const worktrees = await readCoreWorktreeSettings(ctx.cwd);
     const footer = controllers.footer.getSettings();
 
     const result = await ctx.ui.custom<SelectorResult>((_tui, theme, _kb, done) => {
@@ -226,6 +230,13 @@ async function openCoreSettingsSelector(
           "Subagent high model",
           subagents?.high?.model ?? "unset",
           "Configure global provider/model-id and optional thinking level for high-capability subagents.",
+          done,
+        ),
+        actionItem(
+          "worktree-root",
+          "Managed worktree root",
+          worktrees?.root ?? DEFAULT_MANAGED_ROOT,
+          "Directory under which add_git_worktree creates worktrees. Leading ~ is expanded.",
           done,
         ),
         actionItem(
@@ -349,6 +360,10 @@ async function runAction(
     await configureFooterTemplate(ctx, controllers.footer);
     return;
   }
+  if (id === "worktree-root") {
+    await configureWorktreeRoot(ctx);
+    return;
+  }
   if (id === "json-edit") {
     await editSettings(ctx);
   }
@@ -376,6 +391,35 @@ async function configureFooterTemplate(
 
   await footer.setTemplate(ctx, template);
   ctx.ui.notify("[core-settings] footer template updated", "info");
+}
+
+/** Prompt for the managed worktree root and persist it through the unified settings file. */
+async function configureWorktreeRoot(ctx: ExtensionCommandContext): Promise<void> {
+  if (!ctx.hasUI) {
+    ctx.ui.notify("use /core-settings edit to change the managed worktree root", "info");
+    return;
+  }
+
+  const current = await readCoreWorktreeSettings(ctx.cwd);
+  const edited = await ctx.ui.editor(
+    "Edit managed worktree root (leading ~ is expanded)",
+    `${current?.root ?? DEFAULT_MANAGED_ROOT}\n`,
+  );
+  if (edited === undefined) return;
+  const root = edited.trim();
+  if (!root) {
+    ctx.ui.notify("[core-settings] worktree root unchanged — value was empty", "warning");
+    return;
+  }
+
+  const validated = validateCoreSettings({ version: 1, worktrees: { root } });
+  if (typeof validated === "string") {
+    ctx.ui.notify(`[core-settings] worktree root rejected — ${validated}`, "error");
+    return;
+  }
+
+  await writeCoreWorktreeSettings(ctx.cwd, { root });
+  ctx.ui.notify(`[core-settings] managed worktree root set to ${root}`, "info");
 }
 
 /** Prompt for the history search shortcut and persist it through the unified settings file. */
