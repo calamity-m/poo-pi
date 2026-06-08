@@ -66,7 +66,7 @@ export async function ensureAuditStore(cwd: string): Promise<{ dir: string; seq:
   return { dir: paths.dir, seq };
 }
 
-/** Read the redaction mode fresh per request so a `/proxy-audit redact` flip takes effect live; defaults to `on`. */
+/** Read the redaction mode fresh per request so a `/proxy redact` flip takes effect live; defaults to `on`. */
 export async function readRedactionMode(auditDir: string): Promise<RedactionMode> {
   return readCoreProxyRedactionMode(auditDir);
 }

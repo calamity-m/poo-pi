@@ -1,14 +1,14 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { showPanel } from "../../lib/ui/panel.ts";
+import { showNavigablePanel, showPanel, showSelectPanel } from "../../lib/ui/panel.ts";
 import { readRecentTail, writeRedactionMode } from "./audit.ts";
 import type { AuditRecord, ProxyState, RedactionMode } from "./types.ts";
 
-/** How many recent requests `/proxy-audit recent` lists. */
+/** How many recent requests `/proxy recent` lists. */
 const RECENT_VIEW_LIMIT = 20;
 
 /**
- * Register the `/proxy-audit [status|recent|redact <on|off>]` operator command.
+ * Register the `/proxy [status|recent|redact <on|off>]` operator command.
  *
  * - `status` (default) shows server state/port, routes, unproxied providers, warnings, and recent errors.
  * - `recent` lists recently audited requests (by tailing the index).
@@ -17,14 +17,20 @@ const RECENT_VIEW_LIMIT = 20;
  * Output renders as a TUI panel when a UI is available, and falls back to
  * `ctx.ui.notify` otherwise.
  */
-export function registerProxyAuditCommand(pi: ExtensionAPI, state: ProxyState): void {
-  pi.registerCommand("proxy-audit", {
+export function registerProxyCommand(pi: ExtensionAPI, state: ProxyState): void {
+  pi.registerCommand("proxy", {
     description:
       "Inspect the provider reverse proxy: status, recent requests, and redaction switch",
     handler: async (args, ctx) => {
       const [sub, value] = args.trim().split(/\s+/, 2);
       switch (sub) {
         case "":
+          if (ctx.hasUI) {
+            await showProxyMenu(ctx, state);
+            return;
+          }
+          await present(ctx, "proxy: status", statusLines(state));
+          return;
         case "status":
           await present(ctx, "proxy: status", statusLines(state));
           return;
@@ -35,10 +41,63 @@ export function registerProxyAuditCommand(pi: ExtensionAPI, state: ProxyState): 
           await handleRedact(ctx, state, value);
           return;
         default:
-          ctx.ui.notify("usage: /proxy-audit [status|recent|redact <on|off>]", "warning");
+          ctx.ui.notify("usage: /proxy [status|recent|redact <on|off>]", "warning");
       }
     },
   });
+}
+
+/** Show the interactive proxy command menu using the shared select-panel UX. */
+async function showProxyMenu(ctx: ExtensionCommandContext, state: ProxyState): Promise<void> {
+  while (true) {
+    const selected = await showSelectPanel(ctx, {
+      title: "proxy",
+      items: [
+        {
+          value: "status",
+          label: "status",
+          description: "Show server state, routes, warnings, and recent errors",
+        },
+        {
+          value: "recent",
+          label: "recent requests",
+          description: "Show recently audited provider requests",
+        },
+        {
+          value: "redact-on",
+          label: "redaction on",
+          description: "Mask sensitive headers in future audit records",
+        },
+        {
+          value: "redact-off",
+          label: "redaction off",
+          description: "Log raw headers, including api keys, in future audit records",
+        },
+      ],
+      footer: "↑↓ navigate • Enter open • Esc close",
+    });
+
+    switch (selected) {
+      case "status":
+        if ((await presentNavigable(ctx, "proxy: status", statusLines(state))) === "back") continue;
+        return;
+      case "recent":
+        if (
+          (await presentNavigable(ctx, "proxy: recent requests", await recentLines(state))) ===
+          "back"
+        )
+          continue;
+        return;
+      case "redact-on":
+        await handleRedact(ctx, state, "on");
+        return;
+      case "redact-off":
+        await handleRedact(ctx, state, "off");
+        return;
+      default:
+        return;
+    }
+  }
 }
 
 /** Apply a redaction-switch flip, validating the requested mode. */
@@ -48,7 +107,7 @@ async function handleRedact(
   value: string | undefined,
 ): Promise<void> {
   if (value !== "on" && value !== "off") {
-    ctx.ui.notify("usage: /proxy-audit redact <on|off>", "warning");
+    ctx.ui.notify("usage: /proxy redact <on|off>", "warning");
     return;
   }
   if (!state.auditDir) {
@@ -132,4 +191,15 @@ async function present(
     return;
   }
   ctx.ui.notify(`${title}\n${lines.join("\n")}`, "info");
+}
+
+/** Show lines from the interactive menu, where Backspace returns to the parent menu. */
+async function presentNavigable(
+  ctx: ExtensionCommandContext,
+  title: string,
+  lines: string[],
+): Promise<"close" | "back"> {
+  if (ctx.hasUI) return await showNavigablePanel(ctx, title, lines);
+  ctx.ui.notify(`${title}\n${lines.join("\n")}`, "info");
+  return "close";
 }

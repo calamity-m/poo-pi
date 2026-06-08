@@ -84,7 +84,7 @@ export interface AuditRecord {
 
 /**
  * Mutable runtime state shared between the lifecycle hooks, the server request
- * handler, and the `/proxy-audit` command. A single instance is created per
+ * handler, and the `/proxy` command. A single instance is created per
  * `registerProxy` call and threaded through the proxy modules.
  */
 export interface ProxyState {

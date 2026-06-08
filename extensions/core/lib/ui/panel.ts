@@ -12,6 +12,9 @@ import {
   wrapTextWithAnsi,
 } from "@earendil-works/pi-tui";
 
+/** Navigation result returned by a text panel that can go back to a parent menu. */
+export type PanelNavigationResult = "close" | "back";
+
 /** Show a read-only, scrollable text panel as an overlay and resolve when dismissed. */
 export async function showPanel(
   ctx: ExtensionContext,
@@ -21,6 +24,27 @@ export async function showPanel(
   await ctx.ui.custom<void>(
     (tui, theme, keybindings, done) =>
       new TextPanel(theme, keybindings, () => tui.requestRender(), done, title, lines),
+    { overlay: true, overlayOptions: { width: "80%", minWidth: 48, maxHeight: 24 } },
+  );
+}
+
+/** Show a text panel where Backspace returns `"back"` instead of simply closing. */
+export async function showNavigablePanel(
+  ctx: ExtensionContext,
+  title: string,
+  lines: string[],
+): Promise<PanelNavigationResult> {
+  return await ctx.ui.custom<PanelNavigationResult>(
+    (tui, theme, keybindings, done) =>
+      new TextPanel(
+        theme,
+        keybindings,
+        () => tui.requestRender(),
+        () => done("close"),
+        title,
+        lines,
+        () => done("back"),
+      ),
     { overlay: true, overlayOptions: { width: "80%", minWidth: 48, maxHeight: 24 } },
   );
 }
@@ -157,6 +181,7 @@ export class TextPanel {
   private readonly done: () => void;
   private readonly title: string;
   private readonly lines: string[];
+  private readonly onBack: (() => void) | undefined;
 
   /** Build the panel; `done` is invoked on dismissal so the awaiting command can return. */
   constructor(
@@ -166,6 +191,7 @@ export class TextPanel {
     done: () => void,
     title: string,
     lines: string[],
+    onBack?: () => void,
   ) {
     this.theme = theme;
     this.chrome = new PanelChrome(theme);
@@ -174,10 +200,12 @@ export class TextPanel {
     this.done = done;
     this.title = title;
     this.lines = lines.length > 0 ? lines : ["(nothing to show)"];
+    this.onBack = onBack;
   }
 
   /** Scroll within the content or dismiss the panel. */
   handleInput(data: string): void {
+    if (this.onBack && (data === "\x7f" || data === "\b")) return this.onBack();
     if (
       this.keybindings.matches(data, "tui.select.cancel") ||
       this.keybindings.matches(data, "tui.input.submit") ||
@@ -206,11 +234,13 @@ export class TextPanel {
     if (width < 4) return [truncateToWidth(this.title, width, "")];
 
     const contentWidth = width;
-    const footer = "↑/↓ PgUp/PgDn scroll • Esc/Enter/q close";
+    const footer = this.onBack
+      ? "↑/↓ PgUp/PgDn scroll • Backspace back • Esc/Enter/q close"
+      : "↑/↓ PgUp/PgDn scroll • Esc/Enter/q close";
     const wrappedLines = this.lines.flatMap((line) =>
       line === "" ? [""] : wrapTextWithAnsi(line, contentWidth),
     );
-    this.viewportHeight = Math.max(1, 24 - 3);
+    this.viewportHeight = Math.max(1, 24 - 4);
     this.totalRenderedLines = wrappedLines.length;
     const maxOffset = Math.max(0, wrappedLines.length - this.viewportHeight);
     this.offset = Math.min(this.offset, maxOffset);

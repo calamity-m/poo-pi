@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { registerProxyAuditCommand } from "./command.ts";
+import { registerProxyCommand } from "./command.ts";
 import { applyProviderOverrides } from "./routes.ts";
 import { startProxyServer, stopProxyServer } from "./server.ts";
 import { createProxyState, type ProxyState, type RegisterProxyOptions } from "./types.ts";
@@ -37,7 +37,7 @@ function getProxyState(): ProxyState {
 /**
  * Register the provider reverse proxy: start the loopback server, re-register
  * providers through it, originate mTLS on the upstream leg when a client
- * certificate is loaded, audit each request, and expose the `/proxy-audit`
+ * certificate is loaded, audit each request, and expose the `/proxy`
  * operator command.
  *
  * The server starts before any base-URL overrides are applied, and overrides
@@ -65,7 +65,7 @@ export function registerProxy(
     return stopProxyServer(state);
   });
 
-  registerProxyAuditCommand(pi, state);
+  registerProxyCommand(pi, state);
   return {
     ensure,
     isActive: () => state.port !== undefined,
