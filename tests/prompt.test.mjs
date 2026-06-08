@@ -66,6 +66,29 @@ test("detectFillFields shares raw argument aliases and seeds positional values",
   assert.deepEqual(fields[1], { tokens: ["$2"], label: "$2", value: "two" });
 });
 
+test("PromptFillEditor resolves filled text without submitting to the agent", () => {
+  let submittedText;
+  let completedText;
+  const editor = new __promptForTest.PromptFillEditor(
+    { requestRender: () => {} },
+    { name: "greet" },
+    "Hello $1",
+    [{ tokens: ["$1"], label: "$1", value: "alice" }],
+    { fg: (_key, text) => text, bg: (_key, text) => text },
+    (text) => {
+      completedText = text;
+    },
+  );
+  editor.onSubmit = (text) => {
+    submittedText = text;
+  };
+
+  editor.handleInput("\r");
+
+  assert.equal(completedText, "Hello alice");
+  assert.equal(submittedText, undefined);
+});
+
 test("registerPrompt fills the editor via the fallback editor when custom editors are unsupported", async () => {
   const root = await mkdtemp(join(tmpdir(), "poo-pi-prompt-"));
   try {

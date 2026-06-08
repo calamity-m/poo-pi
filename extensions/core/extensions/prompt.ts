@@ -254,8 +254,6 @@ function expandVisualPrompt(body: string, fields: FillField[]): string {
 class PromptFillEditor implements EditorComponent, Focusable {
   /** Whether Pi has focused this editor component. */
   focused = false;
-  /** Called when the final expanded text is submitted. */
-  onSubmit?: (text: string) => void;
   /** Called when any field edit changes the expanded text. */
   onChange?: (text: string) => void;
   /** Currently edited field index. */
@@ -388,7 +386,6 @@ class PromptFillEditor implements EditorComponent, Focusable {
       return;
     }
     const finalText = this.getText();
-    this.onSubmit?.(finalText);
     this.done(finalText);
   }
 
@@ -593,4 +590,5 @@ export const __promptForTest = {
   detectFillFields,
   expandVisualPrompt,
   loadPrompts,
+  PromptFillEditor,
 } satisfies Record<string, unknown>;
