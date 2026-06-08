@@ -3,7 +3,7 @@ import { basename, extname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 const TOOL_POLICIES = ["none", "read-only", "coding"] as const;
-const PRESET_TIERS = ["fast", "high", "any"] as const;
+const PRESET_TIERS = ["default", "fast", "high", "any"] as const;
 export const MAX_PRESET_BODY_CHARS = 8_000;
 
 type ToolPolicy = (typeof TOOL_POLICIES)[number];

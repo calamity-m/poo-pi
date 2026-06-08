@@ -8,7 +8,7 @@ import type { ProxyReadinessHandle } from "../proxy/index.ts";
 import type { PresetAgent } from "./preset-agents.ts";
 
 export const TOOL_POLICIES = ["none", "read-only", "coding"] as const;
-export const TIERS = ["fast", "high"] as const;
+export const TIERS = ["default", "fast", "high"] as const;
 export const THINKING_LEVELS = ["off", "minimal", "low", "medium", "high", "xhigh"] as const;
 export const MAX_RECORDED_RUNS = 20;
 export const MAX_PRELOADED_FILE_CHARS = 20_000;
@@ -25,7 +25,9 @@ export const spawnSubagentSchema = Type.Object({
     Type.String({ description: "Optional named preset agent to use before explicit overrides." }),
   ),
   task: Type.String({ description: "The isolated subagent task to run." }),
-  tier: Type.Optional(StringEnum(TIERS, { description: "Configured subagent tier to use." })),
+  tier: Type.Optional(
+    StringEnum(TIERS, { description: "Subagent tier to use; default follows the parent model." }),
+  ),
   model: Type.Optional(
     Type.String({ description: "Raw canonical model override, provider/model-id." }),
   ),

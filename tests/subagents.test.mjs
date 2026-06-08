@@ -121,6 +121,23 @@ test("resolveSubagentModel falls back to the active parent model and thinking le
   }
 });
 
+test("resolveSubagentModel supports the default tier as the active parent model", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "poo-pi-subagents-"));
+  try {
+    const selection = await __subagentsForTest.resolveSubagentModel(
+      { task: "t", tier: "default", thinkingLevel: "low" },
+      createContext(cwd, fastModel),
+      pi,
+    );
+    assert.equal(selection.model, fastModel);
+    assert.equal(selection.modelId, "test/fast");
+    assert.equal(selection.thinkingLevel, "low");
+    assert.equal(selection.source, "tier default");
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
 test("nextRunId assigns NATO names in order with a unique suffix", () => {
   assert.match(__subagentsForTest.nextRunId(0, []), /^alpha-[0-9a-z]{2}$/);
   assert.match(__subagentsForTest.nextRunId(1, []), /^bravo-[0-9a-z]{2}$/);

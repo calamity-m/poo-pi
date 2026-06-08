@@ -16,6 +16,7 @@ export async function resolveSubagentModel(
     return resolveCanonicalModel(input.model, input.thinkingLevel, ctx, "raw model override");
 
   const tier = normalizeTier(input.tier);
+  if (tier === "default") return resolveParentModel(input.thinkingLevel, ctx, pi, "tier default");
   if (tier) {
     const settings = await readGlobalCoreSubagentSettings();
     const mapping = settings?.[tier];
@@ -28,18 +29,7 @@ export async function resolveSubagentModel(
     );
   }
 
-  if (!ctx.model)
-    throw new Error("No subagent model configured and parent session has no active model.");
-  const model = ctx.modelRegistry.find(ctx.model.provider, ctx.model.id) ?? ctx.model;
-  if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
-    throw new Error(`Parent model is unavailable; authenticate provider "${model.provider}".`);
-  }
-  return {
-    model,
-    modelId: formatCanonicalModelId(model),
-    thinkingLevel: normalizeThinkingLevel(input.thinkingLevel ?? pi.getThinkingLevel()),
-    source: "parent fallback",
-  };
+  return resolveParentModel(input.thinkingLevel, ctx, pi, "parent fallback");
 }
 
 /** Resolve and auth-check a canonical model id against the live model registry. */
@@ -79,10 +69,31 @@ export function formatCanonicalModelId(model: { provider: string; id: string }):
   return `${model.provider}/${model.id}`;
 }
 
+/** Resolve the active parent-session model selected by `/models`. */
+function resolveParentModel(
+  thinkingLevel: string | undefined,
+  ctx: ExtensionContext,
+  pi: ExtensionAPI,
+  source: string,
+): SubagentModelSelection {
+  if (!ctx.model)
+    throw new Error("No subagent model configured and parent session has no active model.");
+  const model = ctx.modelRegistry.find(ctx.model.provider, ctx.model.id) ?? ctx.model;
+  if (!ctx.modelRegistry.hasConfiguredAuth(model)) {
+    throw new Error(`Parent model is unavailable; authenticate provider "${model.provider}".`);
+  }
+  return {
+    model,
+    modelId: formatCanonicalModelId(model),
+    thinkingLevel: normalizeThinkingLevel(thinkingLevel ?? pi.getThinkingLevel()),
+    source,
+  };
+}
+
 /** Normalize a tier parameter, throwing on unrecognized values. */
 export function normalizeTier(value: string | undefined): Tier | undefined {
   if (value === undefined) return undefined;
-  if (value === "fast" || value === "high") return value;
+  if (value === "default" || value === "fast" || value === "high") return value;
   throw new Error(`Invalid subagent tier: ${value}`);
 }
 
