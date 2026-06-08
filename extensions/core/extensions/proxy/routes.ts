@@ -144,6 +144,9 @@ export async function applyProviderOverrides(
   const { routes, unproxied } = buildRoutes(ctx.modelRegistry.getAll(), state.port, state.routes);
   state.routes = routes;
   state.unproxied = unproxied;
+  // Recompute warnings from scratch each apply; this runs every turn via
+  // before_agent_start, so appending would accumulate duplicates unboundedly.
+  state.warnings = [];
 
   const prefix = localProxyPrefix(state.port);
   for (const route of routes.values()) {
