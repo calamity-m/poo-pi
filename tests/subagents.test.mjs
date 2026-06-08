@@ -10,6 +10,7 @@ import {
   writeGlobalCoreSubagentSettings,
 } from "../extensions/core/config/persistence.ts";
 import { __subagentsForTest } from "../extensions/core/extensions/subagents/index.ts";
+import { TOOL_POLICIES, toolPolicyNames } from "../extensions/core/extensions/subagents/types.ts";
 
 const fastModel = { provider: "test", id: "fast", baseUrl: "http://127.0.0.1:1" };
 const highModel = { provider: "test", id: "high", baseUrl: "http://127.0.0.1:1" };
@@ -135,6 +136,18 @@ test("resolveSubagentModel supports the default tier as the active parent model"
     assert.equal(selection.source, "tier default");
   } finally {
     await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("no tool policy grants spawn_subagent, so subagents cannot recurse", () => {
+  // Nested sessions are restricted to toolPolicyNames[policy]; spawn_subagent must never
+  // appear in any policy, otherwise a subagent could spawn further subagents. The session is
+  // also created with noExtensions, but this allowlist is the guard most likely to regress.
+  for (const policy of TOOL_POLICIES) {
+    assert.ok(
+      !toolPolicyNames[policy].includes("spawn_subagent"),
+      `tool policy "${policy}" must not include spawn_subagent`,
+    );
   }
 });
 
