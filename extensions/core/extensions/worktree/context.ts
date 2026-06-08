@@ -4,7 +4,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
-import { resolveLinkedWorktree, type LinkedWorktreeInfo } from "../lib/worktree.ts";
+import { resolveLinkedWorktree, type LinkedWorktreeInfo } from "../../lib/worktree.ts";
 
 /** Register per-turn linked-worktree context injection for the agent prompt. */
 export function registerWorktreeContext(pi: ExtensionAPI): void {

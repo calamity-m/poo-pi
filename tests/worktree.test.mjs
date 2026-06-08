@@ -10,8 +10,8 @@ import {
   clearLinkedWorktreeCache,
   resolveLinkedWorktree,
 } from "../extensions/core/lib/worktree.ts";
-import { __worktreeCommandForTest } from "../extensions/core/extensions/worktree.ts";
-import { __worktreeContextForTest } from "../extensions/core/extensions/worktree-context.ts";
+import { __worktreeCommandForTest } from "../extensions/core/extensions/worktree/command.ts";
+import { __worktreeContextForTest } from "../extensions/core/extensions/worktree/context.ts";
 
 const { isUnderWorktreesDir } = __worktreeForTest;
 const { parseWorktreeList, formatWorktreeList } = __worktreeCommandForTest;

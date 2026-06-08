@@ -14,8 +14,7 @@ import { registerCoreSettings } from "./extensions/settings.ts";
 import { registerSkills } from "./extensions/skills/index.ts";
 import { registerSubagents } from "./extensions/subagents/index.ts";
 import { registerTls } from "./extensions/tls/index.ts";
-import { registerWorktree } from "./extensions/worktree.ts";
-import { registerWorktreeContext } from "./extensions/worktree-context.ts";
+import { registerWorktree, registerWorktreeContext } from "./extensions/worktree/index.ts";
 
 /**
  * Loads the core extension bundle without enabling any core capabilities yet.
