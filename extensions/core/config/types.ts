@@ -46,6 +46,12 @@ export interface CoreHistorySearchSettings {
   shortcut?: string;
 }
 
+/** Managed worktree settings persisted by core. */
+export interface CoreWorktreeSettings {
+  /** Managed root under which `add_git_worktree` creates worktrees; `~` is expanded at runtime. */
+  root?: string;
+}
+
 /** Footer settings persisted by core. */
 export interface CoreFooterSettings {
   /** Whether the core status footer should replace Pi's default footer. */
@@ -70,4 +76,6 @@ export interface CoreSettings {
   historySearch?: CoreHistorySearchSettings;
   /** Core status footer settings. */
   footer?: CoreFooterSettings;
+  /** Managed Git worktree settings. */
+  worktrees?: CoreWorktreeSettings;
 }

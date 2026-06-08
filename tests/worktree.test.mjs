@@ -1,8 +1,8 @@
 import assert from "node:assert/strict";
 import { execFileSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { homedir, tmpdir } from "node:os";
+import { basename, join } from "node:path";
 import test from "node:test";
 
 import {
@@ -12,10 +12,23 @@ import {
 } from "../extensions/core/lib/worktree.ts";
 import { __worktreeCommandForTest } from "../extensions/core/extensions/worktree/command.ts";
 import { __worktreeContextForTest } from "../extensions/core/extensions/worktree/context.ts";
+import { __worktreePolicyForTest } from "../extensions/core/extensions/worktree/path-policy.ts";
+import { __addWorktreeForTest } from "../extensions/core/extensions/worktree/add-tool.ts";
 
 const { isUnderWorktreesDir } = __worktreeForTest;
 const { parseWorktreeList, formatWorktreeList } = __worktreeCommandForTest;
 const { appendSystemPromptNote, formatWorktreePromptNote } = __worktreeContextForTest;
+const {
+  expandHome,
+  requireAbsoluteManagedRoot,
+  sanitizeLabel,
+  shortHash,
+  repoNamespace,
+  chooseSanitizedLabel,
+  isUnderManagedRoot,
+  reserveUniqueDirectory,
+} = __worktreePolicyForTest;
+const { createManagedWorktree, validateModeFields } = __addWorktreeForTest;
 
 function tmp() {
   return mkdtempSync(join(tmpdir(), "poo-pi-worktree-"));
@@ -186,6 +199,223 @@ test("formatWorktreeList keeps absolute paths visible for duplicate labels", () 
     "  dup [a] /tmp/a/dup",
     "  dup [b] /tmp/b/dup",
   ]);
+});
+
+// ── Path policy helpers ─────────────────────────────────────────────────────
+
+test("expandHome expands only a leading tilde", () => {
+  assert.equal(expandHome("~"), homedir());
+  assert.ok(expandHome("~/foo").endsWith(join("", "foo")));
+  assert.equal(expandHome("/abs/path"), "/abs/path");
+  assert.equal(expandHome("rel/~/x"), "rel/~/x");
+});
+
+test("requireAbsoluteManagedRoot rejects relative roots and resolves tilde", () => {
+  assert.throws(() => requireAbsoluteManagedRoot("relative/dir"), /absolute/);
+  assert.ok(requireAbsoluteManagedRoot("~/.pi/worktrees").startsWith("/"));
+  assert.equal(requireAbsoluteManagedRoot("/managed/root"), "/managed/root");
+});
+
+test("sanitizeLabel keeps safe characters and falls back", () => {
+  assert.equal(sanitizeLabel("feature/cool branch"), "feature-cool-branch");
+  assert.equal(sanitizeLabel("../escape"), "escape");
+  assert.equal(sanitizeLabel("  "), "worktree");
+  assert.equal(sanitizeLabel("keep_dot.v1-2"), "keep_dot.v1-2");
+});
+
+test("shortHash is stable and 8 hex chars", () => {
+  assert.match(shortHash("/repo"), /^[0-9a-f]{8}$/);
+  assert.equal(shortHash("/repo"), shortHash("/repo"));
+  assert.notEqual(shortHash("/repo/a"), shortHash("/repo/b"));
+});
+
+test("repoNamespace distinguishes same-basename repositories", () => {
+  const a = repoNamespace("/tmp/alpha/project");
+  const b = repoNamespace("/tmp/beta/project");
+  assert.ok(a.startsWith("project-"));
+  assert.ok(b.startsWith("project-"));
+  assert.notEqual(a, b);
+});
+
+test("chooseSanitizedLabel prefers explicit then fallback then default", () => {
+  assert.equal(chooseSanitizedLabel("My Label", "branch"), "My-Label");
+  assert.equal(chooseSanitizedLabel(undefined, "feature/x"), "feature-x");
+  assert.equal(chooseSanitizedLabel(undefined, undefined), "worktree");
+});
+
+test("isUnderManagedRoot uses full-segment containment", () => {
+  assert.equal(isUnderManagedRoot("/root/a/b", "/root"), true);
+  assert.equal(isUnderManagedRoot("/root", "/root"), true);
+  assert.equal(isUnderManagedRoot("/root/../escape", "/root"), false);
+  assert.equal(isUnderManagedRoot("/rootother", "/root"), false);
+});
+
+test("reserveUniqueDirectory creates parents and resolves collisions", async () => {
+  const base = join(tmp(), "ns");
+  try {
+    const first = await reserveUniqueDirectory(base, "label");
+    const second = await reserveUniqueDirectory(base, "label");
+    assert.equal(first, join(base, "label"));
+    assert.equal(second, join(base, "label-2"));
+    assert.ok(existsSync(first));
+    assert.ok(existsSync(second));
+  } finally {
+    rmSync(base, { recursive: true, force: true });
+  }
+});
+
+// ── validateModeFields ──────────────────────────────────────────────────────
+
+test("validateModeFields enforces the mode field matrix", () => {
+  assert.doesNotThrow(() => validateModeFields({ mode: "existing_branch", branch: "main" }));
+  assert.doesNotThrow(() => validateModeFields({ mode: "detached", ref: "HEAD" }));
+  assert.doesNotThrow(() =>
+    validateModeFields({ mode: "new_branch", branchName: "n", startPoint: "main" }),
+  );
+
+  assert.throws(() => validateModeFields({ mode: "existing_branch" }), /requires "branch"/);
+  assert.throws(
+    () => validateModeFields({ mode: "existing_branch", branch: "b", ref: "x" }),
+    /must not set "ref"/,
+  );
+  assert.throws(() => validateModeFields({ mode: "detached" }), /requires "ref"/);
+  assert.throws(() => validateModeFields({ mode: "new_branch", branchName: "n" }), /startPoint/);
+});
+
+// ── add_git_worktree integration ────────────────────────────────────────────
+
+function writeManagedRoot(repo, root) {
+  mkdirSync(join(repo, ".pi"), { recursive: true });
+  writeFileSync(
+    join(repo, ".pi", "core-settings.json"),
+    JSON.stringify({ version: 1, worktrees: { root } }),
+  );
+}
+
+function branchOf(dir) {
+  return git(dir, ["rev-parse", "--abbrev-ref", "HEAD"]);
+}
+
+test("createManagedWorktree creates an existing-branch worktree under the managed root", async () => {
+  const repo = tmp();
+  const root = tmp();
+  try {
+    initRepo(repo);
+    git(repo, ["branch", "feature"]);
+    writeManagedRoot(repo, root);
+
+    const result = await createManagedWorktree(
+      { mode: "existing_branch", branch: "feature" },
+      repo,
+      undefined,
+    );
+    assert.ok(isUnderManagedRoot(result.destination, root));
+    assert.ok(result.destination.includes(`${basename(repo)}-`));
+    assert.equal(result.branch, "feature");
+    assert.equal(branchOf(result.destination), "feature");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createManagedWorktree creates a detached worktree", async () => {
+  const repo = tmp();
+  const root = tmp();
+  try {
+    initRepo(repo);
+    writeManagedRoot(repo, root);
+
+    const result = await createManagedWorktree(
+      { mode: "detached", ref: "HEAD", label: "det" },
+      repo,
+      undefined,
+    );
+    assert.equal(result.mode, "detached");
+    assert.ok(isUnderManagedRoot(result.destination, root));
+    assert.equal(branchOf(result.destination), "HEAD");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createManagedWorktree creates a new branch from a start point", async () => {
+  const repo = tmp();
+  const root = tmp();
+  try {
+    initRepo(repo);
+    writeManagedRoot(repo, root);
+
+    const result = await createManagedWorktree(
+      { mode: "new_branch", branchName: "fresh", startPoint: "main" },
+      repo,
+      undefined,
+    );
+    assert.equal(result.branch, "fresh");
+    assert.equal(branchOf(result.destination), "fresh");
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createManagedWorktree rejects a non-Git source", async () => {
+  const dir = tmp();
+  try {
+    await assert.rejects(
+      createManagedWorktree({ mode: "detached", ref: "HEAD" }, dir, undefined),
+      /Not a Git repository/,
+    );
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("createManagedWorktree rejects a managed root inside the repository", async () => {
+  const repo = tmp();
+  try {
+    initRepo(repo);
+    writeManagedRoot(repo, join(repo, "wt"));
+    await assert.rejects(
+      createManagedWorktree({ mode: "detached", ref: "HEAD" }, repo, undefined),
+      /inside the source repository/,
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+  }
+});
+
+test("createManagedWorktree rejects an unknown local branch", async () => {
+  const repo = tmp();
+  const root = tmp();
+  try {
+    initRepo(repo);
+    writeManagedRoot(repo, root);
+    await assert.rejects(
+      createManagedWorktree({ mode: "existing_branch", branch: "ghost" }, repo, undefined),
+      /does not exist/,
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("createManagedWorktree rejects an invalid mode/field combination", async () => {
+  const repo = tmp();
+  const root = tmp();
+  try {
+    initRepo(repo);
+    writeManagedRoot(repo, root);
+    await assert.rejects(
+      createManagedWorktree({ mode: "detached", ref: "HEAD", branch: "main" }, repo, undefined),
+      /must not set "branch"/,
+    );
+  } finally {
+    rmSync(repo, { recursive: true, force: true });
+    rmSync(root, { recursive: true, force: true });
+  }
 });
 
 test("formatWorktreePromptNote and appendSystemPromptNote build concise prompt context", () => {

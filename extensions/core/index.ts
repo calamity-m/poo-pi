@@ -14,7 +14,11 @@ import { registerCoreSettings } from "./extensions/settings.ts";
 import { registerSkills } from "./extensions/skills/index.ts";
 import { registerSubagents } from "./extensions/subagents/index.ts";
 import { registerTls } from "./extensions/tls/index.ts";
-import { registerWorktree, registerWorktreeContext } from "./extensions/worktree/index.ts";
+import {
+  registerAddGitWorktree,
+  registerWorktree,
+  registerWorktreeContext,
+} from "./extensions/worktree/index.ts";
 
 /**
  * Loads the core extension bundle without enabling any core capabilities yet.
@@ -35,6 +39,7 @@ export default function core(pi: ExtensionAPI) {
   const subagents = registerSubagents(pi, { proxy });
   registerWorktree(pi);
   registerWorktreeContext(pi);
+  registerAddGitWorktree(pi);
   const permissions = registerPermissions(pi);
   const footer = registerCoreFooter(pi, { permissions, tls, proxy, subagents });
   registerCoreSettings(pi, { permissions, tls, footer });

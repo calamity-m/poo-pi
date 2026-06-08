@@ -18,6 +18,7 @@ import type {
   CoreHistorySearchSettings,
   CoreSettings,
   CoreSubagentSettings,
+  CoreWorktreeSettings,
 } from "./types.ts";
 
 /** Read unified core settings from `.pi/core-settings.json`, returning defaults when absent or malformed. */
@@ -171,6 +172,13 @@ export async function writeCoreFooterSettings(
   await writeCoreSettings(cwd, settings);
 }
 
+/** Read managed worktree settings from unified (project-local) core settings. */
+export async function readCoreWorktreeSettings(
+  cwd: string,
+): Promise<CoreWorktreeSettings | undefined> {
+  return (await readCoreSettings(cwd)).worktrees;
+}
+
 /** Read user-scoped subagent tier settings from global core settings. */
 export async function readGlobalCoreSubagentSettings(): Promise<CoreSubagentSettings | undefined> {
   return (await readGlobalCoreSettings()).subagents;
@@ -200,6 +208,8 @@ export function validateCoreSettings(value: unknown): CoreSettings | string {
   if (footerError) return footerError;
   const historySearchError = validateHistorySearchSection(value["historySearch"]);
   if (historySearchError) return historySearchError;
+  const worktreeError = validateWorktreeSection(value["worktrees"]);
+  if (worktreeError) return worktreeError;
   return parseCoreSettings(value) ?? createDefaultCoreSettings();
 }
 
@@ -226,6 +236,9 @@ export function parseCoreSettings(value: unknown): CoreSettings | undefined {
 
   const footer = parseFooterSettings(raw["footer"]);
   if (footer) out.footer = footer;
+
+  const worktrees = parseWorktreeSettings(raw["worktrees"]);
+  if (worktrees) out.worktrees = worktrees;
 
   return out;
 }
@@ -314,6 +327,17 @@ function validateFooterSection(value: unknown): string | undefined {
   return undefined;
 }
 
+/** Validate the worktrees section when present in edited core settings. */
+export function validateWorktreeSection(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return '"worktrees" must be an object';
+  const root = value["root"];
+  if (root !== undefined && (typeof root !== "string" || root.trim() === "")) {
+    return '"worktrees.root" must be a non-empty string';
+  }
+  return undefined;
+}
+
 /** Validate the subagents section when present in edited core settings. */
 export function validateSubagentSection(value: unknown): string | undefined {
   if (value === undefined) return undefined;
@@ -339,6 +363,14 @@ function parseHistorySearchSettings(value: unknown): CoreHistorySearchSettings |
   const shortcut = value["shortcut"];
   if (!isKeyboardShortcut(shortcut)) return undefined;
   return { shortcut: shortcut.trim() };
+}
+
+/** Parse the worktrees section, dropping invalid fields. */
+function parseWorktreeSettings(value: unknown): CoreWorktreeSettings | undefined {
+  if (!isRecord(value)) return undefined;
+  const root = value["root"];
+  if (typeof root !== "string" || root.trim() === "") return undefined;
+  return { root: root.trim() };
 }
 
 /** Parse footer settings, dropping invalid fields. */

@@ -3,6 +3,13 @@ import { basename, resolve } from "node:path";
 
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
+import { readCoreWorktreeSettings } from "../../config/persistence.ts";
+import {
+  DEFAULT_MANAGED_ROOT,
+  isUnderManagedRoot,
+  requireAbsoluteManagedRoot,
+} from "./path-policy.ts";
+
 /** Parsed row from `git worktree list --porcelain`. */
 export interface WorktreeListEntry {
   /** Absolute worktree path. */
@@ -15,6 +22,8 @@ export interface WorktreeListEntry {
   bare: boolean;
   /** Whether this entry matches the command cwd's top-level checkout path. */
   current: boolean;
+  /** Whether this entry lives under the configured managed worktree root. */
+  managed: boolean;
   /** Compact deterministic display label. */
   label: string;
 }
@@ -38,7 +47,8 @@ async function handleWorktreeCommand(ctx: ExtensionCommandContext): Promise<void
   }
 
   const currentRoot = gitText(ctx.cwd, ["rev-parse", "--path-format=absolute", "--show-toplevel"]);
-  const entries = parseWorktreeList(output, currentRoot ?? undefined);
+  const managedRoot = await resolveManagedRoot(ctx.cwd);
+  const entries = parseWorktreeList(output, currentRoot ?? undefined, managedRoot);
   const linked = entries.filter((entry) => !entry.current && !entry.bare);
   if (linked.length === 0) {
     notify(ctx, "No linked Git worktrees found for this repository.", "info");
@@ -48,8 +58,25 @@ async function handleWorktreeCommand(ctx: ExtensionCommandContext): Promise<void
   notify(ctx, formatWorktreeList(entries).join("\n"), "info");
 }
 
+/**
+ * Resolve the configured managed worktree root to an absolute path for marking,
+ * returning undefined when the configured value is unusable (no marking).
+ */
+async function resolveManagedRoot(cwd: string): Promise<string | undefined> {
+  try {
+    const settings = await readCoreWorktreeSettings(cwd);
+    return requireAbsoluteManagedRoot(settings?.root ?? DEFAULT_MANAGED_ROOT);
+  } catch {
+    return undefined;
+  }
+}
+
 /** Parse porcelain worktree-list output into display entries. */
-function parseWorktreeList(output: string, currentRoot?: string): WorktreeListEntry[] {
+function parseWorktreeList(
+  output: string,
+  currentRoot?: string,
+  managedRoot?: string,
+): WorktreeListEntry[] {
   const entries: WorktreeListEntry[] = [];
   let current: Partial<WorktreeListEntry> | undefined;
 
@@ -62,6 +89,7 @@ function parseWorktreeList(output: string, currentRoot?: string): WorktreeListEn
       branch: current.branch,
       bare: current.bare ?? false,
       current: currentRoot ? path === resolve(currentRoot) : false,
+      managed: managedRoot ? isUnderManagedRoot(path, managedRoot) : false,
       label: basename(path) || path,
     });
   };
@@ -97,7 +125,8 @@ function formatWorktreeList(entries: WorktreeListEntry[]): string[] {
       const marker = entry.current ? "*" : " ";
       const branch = entry.branch ?? (entry.head ? entry.head.slice(0, 7) : "unknown");
       const bare = entry.bare ? " bare" : "";
-      return `${marker} ${entry.label} [${branch}${bare}] ${entry.path}`;
+      const managed = entry.managed ? " managed" : "";
+      return `${marker} ${entry.label} [${branch}${bare}${managed}] ${entry.path}`;
     }),
   ];
 }

@@ -9,6 +9,7 @@ import {
   readCoreSettings,
   validateCoreSettings,
   validateSubagentSection,
+  validateWorktreeSection,
   writeCoreSettings,
 } from "../extensions/core/config/persistence.ts";
 
@@ -74,6 +75,44 @@ test("validateCoreSettings returns normalized settings with subagents", () => {
   const result = validateCoreSettings({ version: 1, subagents: validSubagents });
   assert.notEqual(typeof result, "string");
   assert.deepEqual(typeof result === "string" ? undefined : result.subagents, validSubagents);
+});
+
+test("parseCoreSettings retains a valid worktrees root", () => {
+  assert.deepEqual(
+    parseCoreSettings({ version: 1, worktrees: { root: "~/.pi/worktrees" } })?.worktrees,
+    { root: "~/.pi/worktrees" },
+  );
+});
+
+test("parseCoreSettings drops an empty worktrees root", () => {
+  assert.equal(parseCoreSettings({ version: 1, worktrees: { root: "  " } })?.worktrees, undefined);
+});
+
+test("validateWorktreeSection accepts undefined and a valid root", () => {
+  assert.equal(validateWorktreeSection(undefined), undefined);
+  assert.equal(validateWorktreeSection({ root: "~/.pi/worktrees" }), undefined);
+});
+
+test("validateWorktreeSection rejects non-objects and empty roots", () => {
+  assert.match(validateWorktreeSection("x"), /worktrees/);
+  assert.match(validateWorktreeSection({ root: "" }), /worktrees.root/);
+  assert.match(validateWorktreeSection({ root: 5 }), /worktrees.root/);
+});
+
+test("worktrees survive a write round trip with other settings", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "poo-pi-settings-"));
+  try {
+    await writeCoreSettings(cwd, {
+      version: 1,
+      worktrees: { root: "/tmp/managed-worktrees" },
+      footer: { enabled: true },
+    });
+    const settings = await readCoreSettings(cwd);
+    assert.deepEqual(settings.worktrees, { root: "/tmp/managed-worktrees" });
+    assert.deepEqual(settings.footer, { enabled: true });
+  } finally {
+    await rm(cwd, { recursive: true, force: true });
+  }
 });
 
 test("subagents survive a write round trip with other settings", async () => {
