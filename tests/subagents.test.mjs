@@ -5,7 +5,10 @@ import { join } from "node:path";
 import { pathToFileURL } from "node:url";
 import test from "node:test";
 
-import { writeCoreSubagentSettings } from "../extensions/core/config/persistence.ts";
+import {
+  writeCoreSettings,
+  writeGlobalCoreSubagentSettings,
+} from "../extensions/core/config/persistence.ts";
 import { __subagentsForTest } from "../extensions/core/extensions/subagents/index.ts";
 
 const fastModel = { provider: "test", id: "fast", baseUrl: "http://127.0.0.1:1" };
@@ -43,10 +46,12 @@ test("resolveSubagentModel handles raw model override", async () => {
   }
 });
 
-test("resolveSubagentModel handles configured fast/high tiers", async () => {
+test("resolveSubagentModel handles globally configured fast/high tiers", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "poo-pi-subagents-"));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   try {
-    await writeCoreSubagentSettings(cwd, {
+    process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
+    await writeGlobalCoreSubagentSettings({
       fast: { model: "test/fast", thinkingLevel: "off" },
       high: { model: "test/high", thinkingLevel: "high" },
     });
@@ -65,6 +70,36 @@ test("resolveSubagentModel handles configured fast/high tiers", async () => {
     assert.equal(high.model, highModel);
     assert.equal(high.thinkingLevel, "high");
   } finally {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await rm(cwd, { recursive: true, force: true });
+  }
+});
+
+test("resolveSubagentModel ignores project-local subagent tiers", async () => {
+  const cwd = await mkdtemp(join(tmpdir(), "poo-pi-subagents-"));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  try {
+    process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
+    await writeCoreSettings(cwd, {
+      version: 1,
+      subagents: { fast: { model: "test/high", thinkingLevel: "high" } },
+    });
+    await writeGlobalCoreSubagentSettings({
+      fast: { model: "test/fast", thinkingLevel: "off" },
+    });
+
+    const selection = await __subagentsForTest.resolveSubagentModel(
+      { task: "t", tier: "fast" },
+      createContext(cwd),
+      pi,
+    );
+
+    assert.equal(selection.model, fastModel);
+    assert.equal(selection.thinkingLevel, "off");
+  } finally {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
     await rm(cwd, { recursive: true, force: true });
   }
 });

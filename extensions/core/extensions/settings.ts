@@ -3,18 +3,18 @@ import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 import { type SettingItem, SettingsList, parseKey } from "@earendil-works/pi-tui";
 
-import { coreSettingsPath } from "../config/paths.ts";
+import { coreSettingsPath, globalCoreSettingsPath } from "../config/paths.ts";
 import {
   readCoreClientTlsSkip,
   readCoreHistorySearchSettings,
   readCoreProxyRedactionMode,
   readCoreSettings,
-  readCoreSubagentSettings,
+  readGlobalCoreSubagentSettings,
   validateCoreSettings,
   writeCoreClientTlsSkip,
   writeCoreHistorySearchSettings,
   writeCoreSettings,
-  writeCoreSubagentSettings,
+  writeGlobalCoreSubagentSettings,
 } from "../config/persistence.ts";
 import type { PermissionsController } from "./permissions/index.ts";
 import type { PermissionMode } from "./permissions/types.ts";
@@ -148,7 +148,7 @@ async function openCoreSettingsSelector(
   for (;;) {
     const redaction = await readCoreProxyRedactionMode(auditPaths(ctx.cwd).dir);
     const tlsSkipped = await readCoreClientTlsSkip(ctx.cwd);
-    const subagents = await readCoreSubagentSettings(ctx.cwd);
+    const subagents = await readGlobalCoreSubagentSettings();
     const historySearch = await readCoreHistorySearchSettings(ctx.cwd);
 
     const result = await ctx.ui.custom<SelectorResult>((_tui, theme, _kb, done) => {
@@ -200,14 +200,14 @@ async function openCoreSettingsSelector(
           "subagents-fast",
           "Subagent fast model",
           subagents?.fast?.model ?? "unset",
-          "Configure provider/model-id and optional thinking level for fast subagents.",
+          "Configure global provider/model-id and optional thinking level for fast subagents.",
           done,
         ),
         actionItem(
           "subagents-high",
           "Subagent high model",
           subagents?.high?.model ?? "unset",
-          "Configure provider/model-id and optional thinking level for high-capability subagents.",
+          "Configure global provider/model-id and optional thinking level for high-capability subagents.",
           done,
         ),
         actionItem(
@@ -458,12 +458,12 @@ function findShortcutConflicts(
   return conflicts;
 }
 
-/** Prompt for one subagent tier mapping and persist it through the unified settings file. */
+/** Prompt for one subagent tier mapping and persist it through the global settings file. */
 async function configureSubagentTier(
   ctx: ExtensionCommandContext,
   tier: "fast" | "high",
 ): Promise<void> {
-  const current = await readCoreSubagentSettings(ctx.cwd);
+  const current = await readGlobalCoreSubagentSettings();
   const available = [
     ...new Set(
       ctx.modelRegistry
@@ -509,8 +509,11 @@ async function configureSubagentTier(
     ctx.ui.notify(`[core-settings] subagent ${tier} rejected — ${validated}`, "error");
     return;
   }
-  await writeCoreSubagentSettings(ctx.cwd, next);
-  ctx.ui.notify(`[core-settings] subagent ${tier} updated`, "info");
+  await writeGlobalCoreSubagentSettings(next);
+  ctx.ui.notify(
+    `[core-settings] global subagent ${tier} updated (${globalCoreSettingsPath()})`,
+    "info",
+  );
 }
 
 /** Return whether a selected UI string is a supported persisted thinking level. */

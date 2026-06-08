@@ -151,21 +151,18 @@ export async function writeCoreHistorySearchSettings(
   await writeCoreSettings(cwd, settings);
 }
 
-/** Read subagent tier settings from unified core settings. */
-export async function readCoreSubagentSettings(
-  cwd: string,
-): Promise<CoreSubagentSettings | undefined> {
-  return (await readCoreSettings(cwd)).subagents;
+/** Read user-scoped subagent tier settings from global core settings. */
+export async function readGlobalCoreSubagentSettings(): Promise<CoreSubagentSettings | undefined> {
+  return (await readGlobalCoreSettings()).subagents;
 }
 
-/** Persist subagent tier settings without disturbing other core settings sections. */
-export async function writeCoreSubagentSettings(
-  cwd: string,
+/** Persist user-scoped subagent tier settings without disturbing other global settings sections. */
+export async function writeGlobalCoreSubagentSettings(
   subagents: CoreSubagentSettings,
 ): Promise<void> {
-  const settings = await readCoreSettings(cwd);
+  const settings = await readGlobalCoreSettings();
   settings.subagents = subagents;
-  await writeCoreSettings(cwd, settings);
+  await writeGlobalCoreSettings(settings);
 }
 
 /** Validate an unknown JSON value for user edits and return normalized core settings. */

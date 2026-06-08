@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { readCoreSubagentSettings } from "../../config/persistence.ts";
+import { readGlobalCoreSubagentSettings } from "../../config/persistence.ts";
 import type { SpawnSubagentInput, SubagentModelSelection, Tier } from "./types.ts";
 import { THINKING_LEVELS } from "./types.ts";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
@@ -17,7 +17,7 @@ export async function resolveSubagentModel(
 
   const tier = normalizeTier(input.tier);
   if (tier) {
-    const settings = await readCoreSubagentSettings(ctx.cwd);
+    const settings = await readGlobalCoreSubagentSettings();
     const mapping = settings?.[tier];
     if (!mapping) throw new Error(`No subagent model configured for tier "${tier}"`);
     return resolveCanonicalModel(
