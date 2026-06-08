@@ -7,7 +7,6 @@ import { registerCoreHeader } from "./extensions/header.ts";
 import { registerHelp } from "./extensions/help.ts";
 import { registerHistorySearch } from "./extensions/history-search.ts";
 import { registerInterview } from "./extensions/interview/index.ts";
-import { registerModels } from "./extensions/models.ts";
 import { registerPermissions } from "./extensions/permissions/index.ts";
 import { registerPrompt } from "./extensions/prompt.ts";
 import { registerProxy } from "./extensions/proxy/index.ts";
@@ -28,7 +27,6 @@ export default function core(pi: ExtensionAPI) {
   registerHelp(pi);
   registerHistorySearch(pi);
   registerInterview(pi);
-  registerModels(pi);
   registerPrompt(pi);
   registerSkills(pi);
   // TLS resolves during session_start; the proxy reads it lazily per request and attaches the
