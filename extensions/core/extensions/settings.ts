@@ -1,7 +1,7 @@
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList, Text, parseKey } from "@earendil-works/pi-tui";
+import { type SettingItem, SettingsList, parseKey } from "@earendil-works/pi-tui";
 
 import { coreSettingsPath } from "../config/paths.ts";
 import {
@@ -227,13 +227,11 @@ async function openCoreSettingsSelector(
         () => done({ kind: "close" }),
       );
 
-      const container = new Container();
-      container.addChild(new Text(theme.fg("accent", theme.bold("core settings")), 1, 1));
-      container.addChild(list);
+      const chrome = new PanelChrome(theme);
 
       return {
-        render: (width) => container.render(width),
-        invalidate: () => container.invalidate(),
+        render: (width) => chrome.render("core settings", width, ["", ...list.render(width)]),
+        invalidate: () => list.invalidate(),
         handleInput: (data) => list.handleInput(data),
       };
     });
