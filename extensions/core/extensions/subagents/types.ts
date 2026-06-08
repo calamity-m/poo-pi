@@ -98,7 +98,23 @@ export interface SubagentRun {
   startedAt: number;
   /** End timestamp in milliseconds. */
   endedAt?: number;
+  /**
+   * Abort hook for a live run. Aborts the nested session and records optional operator
+   * notes that are surfaced back to the parent agent. Present only while the run is active.
+   */
+  cancel?: (notes?: string) => void;
+  /** Operator-provided cancellation notes, surfaced back to the parent agent. */
+  cancelNotes?: string;
 }
+
+/** Action chosen from the `/subagents` selector overlay. */
+export type SubagentSelectAction =
+  | { kind: "open"; runId: string }
+  | { kind: "cancel"; runId: string; withNotes: boolean }
+  | { kind: "cancel-all"; withNotes: boolean };
+
+/** Cancel variants of {@link SubagentSelectAction}. */
+export type SubagentCancelAction = Extract<SubagentSelectAction, { kind: "cancel" | "cancel-all" }>;
 
 /** Resolved model plus provenance for a subagent session. */
 export interface SubagentModelSelection {

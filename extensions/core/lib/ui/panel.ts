@@ -62,7 +62,7 @@ export async function showInlinePanel(
 }
 
 /** Options for a shared select-list overlay panel. */
-export interface SelectPanelOptions {
+export interface SelectPanelOptions<T = string> {
   /** Title rendered at the top of the selector. */
   title: string;
   /** Items shown in the selector. */
@@ -77,14 +77,22 @@ export interface SelectPanelOptions {
   minWidth?: number;
   /** Overlay maximum height setting passed through to Pi's custom UI API. */
   maxHeight?: SizeValue;
+  /** Map the chosen item (Enter) to a result. Defaults to the item value. */
+  onSelect?: (item: SelectItem) => T | null;
+  /**
+   * Intercept a raw key before the list handles it. Return a result to dismiss the overlay,
+   * or `undefined` to let the list handle the key normally. The currently highlighted item is
+   * passed so callers can act on the active selection.
+   */
+  onKey?: (data: string, current: SelectItem | null) => T | null | undefined;
 }
 
-/** Show a subagents-style select-list overlay and return the selected item value. */
-export async function showSelectPanel(
+/** Show a subagents-style select-list overlay and return the selected result. */
+export async function showSelectPanel<T = string>(
   ctx: ExtensionContext,
-  options: SelectPanelOptions,
-): Promise<string | null> {
-  return await ctx.ui.custom<string | null>(
+  options: SelectPanelOptions<T>,
+): Promise<T | null> {
+  return await ctx.ui.custom<T | null>(
     (tui, theme, _keybindings, done) => {
       const list = new SelectList(
         options.items,
@@ -97,7 +105,8 @@ export async function showSelectPanel(
           noMatch: (text: string) => theme.fg("warning", text),
         },
       );
-      list.onSelect = (item) => done(item.value);
+      list.onSelect = (item) =>
+        done(options.onSelect ? options.onSelect(item) : (item.value as unknown as T));
       list.onCancel = () => done(null);
 
       const container = new Container();
@@ -113,6 +122,13 @@ export async function showSelectPanel(
         render: (width) => container.render(width),
         invalidate: () => container.invalidate(),
         handleInput: (data) => {
+          if (options.onKey) {
+            const result = options.onKey(data, list.getSelectedItem());
+            if (result !== undefined) {
+              done(result);
+              return;
+            }
+          }
           list.handleInput(data);
           tui.requestRender();
         },

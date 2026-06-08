@@ -86,6 +86,34 @@ test("resolveSubagentModel falls back to the active parent model and thinking le
   }
 });
 
+test("nextRunId assigns NATO names in order with a unique suffix", () => {
+  assert.match(__subagentsForTest.nextRunId(0, []), /^alpha-[0-9a-z]{2}$/);
+  assert.match(__subagentsForTest.nextRunId(1, []), /^bravo-[0-9a-z]{2}$/);
+  // Wraps after the 26-name pool.
+  assert.match(__subagentsForTest.nextRunId(26, []), /^alpha-[0-9a-z]{2}$/);
+
+  // Retries the suffix until it avoids ids already in use.
+  const taken = new Set();
+  for (let i = 0; i < 50; i++) taken.add(__subagentsForTest.nextRunId(0, taken));
+  assert.equal(taken.size, 50);
+  assert.ok([...taken].every((id) => id.startsWith("alpha-")));
+});
+
+test("formatCancellationResult includes notes and partial output", () => {
+  const withNotes = __subagentsForTest.formatCancellationResult(
+    { id: "sa-1", cancelNotes: "wrong file" },
+    "partial answer",
+  );
+  assert.match(withNotes, /cancelled by the user/);
+  assert.match(withNotes, /User notes: wrong file/);
+  assert.match(withNotes, /Partial output before cancellation:\npartial answer/);
+
+  const bare = __subagentsForTest.formatCancellationResult({ id: "sa-2" }, "   ");
+  assert.match(bare, /cancelled by the user/);
+  assert.doesNotMatch(bare, /User notes/);
+  assert.doesNotMatch(bare, /Partial output/);
+});
+
 test("parsePresetAgentFile reads valid frontmatter and body", () => {
   const preset = __subagentsForTest.parsePresetAgentFile(
     "explorer.md",

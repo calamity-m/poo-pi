@@ -9,14 +9,60 @@ import type {
 } from "./types.ts";
 import { MAX_RECORDED_RUNS } from "./types.ts";
 
+/** NATO phonetic alphabet, used to assign readable subagent ids in spawn order. */
+const NATO_NAMES = [
+  "alpha",
+  "bravo",
+  "charlie",
+  "delta",
+  "echo",
+  "foxtrot",
+  "golf",
+  "hotel",
+  "india",
+  "juliett",
+  "kilo",
+  "lima",
+  "mike",
+  "november",
+  "oscar",
+  "papa",
+  "quebec",
+  "romeo",
+  "sierra",
+  "tango",
+  "uniform",
+  "victor",
+  "whiskey",
+  "xray",
+  "yankee",
+  "zulu",
+] as const;
+
+/**
+ * Build the next readable run id: a NATO phonetic name picked by spawn order with a tiny
+ * random suffix for uniqueness (e.g. `alpha-7f`). The suffix is retried against `taken` so
+ * the id stays unique even after the name pool wraps.
+ */
+export function nextRunId(seq: number, taken: Iterable<string>): string {
+  const base = NATO_NAMES[seq % NATO_NAMES.length];
+  const used = new Set(taken);
+  let id: string;
+  do {
+    id = `${base}-${Math.random().toString(36).slice(2, 4)}`;
+  } while (used.has(id));
+  return id;
+}
+
 /** Create an in-memory run record for a new subagent invocation. */
 export function createRun(
+  id: string,
   input: AppliedPresetInput,
   selection: SubagentModelSelection,
   tools: ToolPolicy,
 ): SubagentRun {
   return {
-    id: `sa-${Date.now().toString(36).slice(-4)}${Math.random().toString(36).slice(2, 5)}`,
+    id,
     task: input.task,
     modelId: selection.modelId,
     thinkingLevel: selection.thinkingLevel,
@@ -50,6 +96,8 @@ export function handleSubagentEvent(run: SubagentRun, event: AgentSessionEvent):
       run.currentActivity = `${event.toolName} ${event.isError ? "error" : "done"}`;
       break;
     case "agent_end":
+      // Preserve an operator-initiated abort; only a still-active run completes as done.
+      if (run.status === "aborted") break;
       run.status = "done";
       run.currentActivity = "done";
       run.endedAt = Date.now();
@@ -87,6 +135,18 @@ export function statusIcon(status: SubagentRunStatus): string {
 export function formatElapsed(run: SubagentRun): string {
   const end = run.endedAt ?? Date.now();
   return `${Math.max(0, Math.round((end - run.startedAt) / 1000))}s`;
+}
+
+/**
+ * Build the text returned to the parent agent when a run is cancelled by the operator.
+ * Includes any operator notes and any partial output captured before cancellation.
+ */
+export function formatCancellationResult(run: SubagentRun, partial: string): string {
+  const lines = [`Subagent ${run.id} was cancelled by the user before completing.`];
+  if (run.cancelNotes) lines.push(`User notes: ${run.cancelNotes}`);
+  const trimmed = partial.trim();
+  if (trimmed) lines.push("", "Partial output before cancellation:", trimmed);
+  return lines.join("\n");
 }
 
 /** Truncate text to a single line with an ellipsis. */

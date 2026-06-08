@@ -4,7 +4,7 @@ import { showInlinePanel, showSelectPanel, TextPanel } from "../../lib/ui/panel.
 import { requestCoreFooterRender } from "../footer.ts";
 import { formatElapsed, formatRunSource, hasActiveRuns, statusIcon, truncate } from "./run.ts";
 import { buildTranscriptLines } from "./transcript.ts";
-import type { SubagentRun } from "./types.ts";
+import type { SubagentCancelAction, SubagentRun, SubagentSelectAction } from "./types.ts";
 
 /** Update footer/widget state for active and recently completed subagents. */
 export function updateSubagentsUi(
@@ -86,25 +86,72 @@ export function buildSubagentsReport(runs: SubagentRun[]): string[] {
   ]);
 }
 
-/** Open the interactive subagent run selector and return the selected run id. */
+/** Open the interactive subagent run selector and return the chosen action. */
 export async function selectSubagentRun(
   ctx: ExtensionContext,
   runs: SubagentRun[],
-): Promise<string | null> {
+): Promise<SubagentSelectAction | null> {
   if (runs.length === 0) {
     await showInlinePanel(ctx, "subagents", buildSubagentsReport(runs));
     return null;
   }
 
-  return await showSelectPanel(ctx, {
+  const footer = hasActiveRuns(runs)
+    ? "↑↓ navigate • Enter open • x cancel • X cancel+notes • a cancel all • A all+notes • Esc close"
+    : "↑↓ navigate • Enter open transcript • Esc close";
+
+  return await showSelectPanel<SubagentSelectAction>(ctx, {
     title: "subagent transcripts",
     items: runs.map((run) => ({
       value: run.id,
       label: `${statusIcon(run.status)} ${run.id} ${run.status}`,
       description: `${formatElapsed(run)} · ${formatRunSource(run)} · ${truncate(run.task, 90)}`,
     })),
-    footer: "↑↓ navigate • Enter open transcript • Esc close",
+    footer,
+    onSelect: (item) => ({ kind: "open", runId: item.value }),
+    onKey: (data, current) => {
+      if (data === "x" || data === "X")
+        return current
+          ? { kind: "cancel", runId: current.value, withNotes: data === "X" }
+          : undefined;
+      if (data === "a" || data === "A") return { kind: "cancel-all", withNotes: data === "A" };
+      return undefined;
+    },
   });
+}
+
+/**
+ * Confirm and execute a cancel action chosen from the selector. Gathers optional operator
+ * notes, aborts the matching live run(s) via their cancel hooks, and notifies the user.
+ */
+export async function confirmAndCancelSubagents(
+  ctx: ExtensionContext,
+  runs: SubagentRun[],
+  action: SubagentCancelAction,
+): Promise<void> {
+  const targets =
+    action.kind === "cancel-all"
+      ? runs.filter((run) => run.cancel)
+      : runs.filter((run) => run.id === action.runId && run.cancel);
+  if (targets.length === 0) {
+    ctx.ui.notify("No active subagents to cancel.", "info");
+    return;
+  }
+
+  const label =
+    action.kind === "cancel-all"
+      ? `${targets.length} running subagent${targets.length === 1 ? "" : "s"}`
+      : `subagent ${targets[0].id}`;
+  const confirmed = await ctx.ui.confirm("Cancel subagent", `Cancel ${label}?`);
+  if (!confirmed) return;
+
+  let notes: string | undefined;
+  if (action.withNotes)
+    notes =
+      (await ctx.ui.input("Cancellation notes (sent to the main agent)", ""))?.trim() || undefined;
+
+  for (const run of targets) run.cancel?.(notes);
+  ctx.ui.notify(`Cancelling ${label}${notes ? " with notes" : ""}.`, "info");
 }
 
 /** Open a colored, scrollable transcript panel for one subagent run. */

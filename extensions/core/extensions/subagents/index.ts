@@ -15,10 +15,18 @@ import {
   formatPresetGuidance,
   preloadFiles,
 } from "./prompt.ts";
-import { createRun, handleSubagentEvent, hasActiveRuns, pruneRuns } from "./run.ts";
+import {
+  createRun,
+  formatCancellationResult,
+  handleSubagentEvent,
+  hasActiveRuns,
+  nextRunId,
+  pruneRuns,
+} from "./run.ts";
 import {
   buildSubagentsReport,
   clearSubagentsUi,
+  confirmAndCancelSubagents,
   formatSubagentsStatusLabel,
   selectSubagentRun,
   showSubagentTranscript,
@@ -50,6 +58,7 @@ export function registerSubagents(
   for (const warning of warnings) console.warn(warning);
   const presetGuidance = formatPresetGuidance(presets);
   const runs: SubagentRun[] = [];
+  let spawnCount = 0;
   let clearWidgetTimer: ReturnType<typeof setTimeout> | undefined;
 
   const updateUi = (ctx: ExtensionContext): void => {
@@ -76,9 +85,14 @@ export function registerSubagents(
         return;
       }
 
-      const selectedRunId = await selectSubagentRun(ctx, runs);
-      const run = runs.find((candidate) => candidate.id === selectedRunId);
-      if (run) await showSubagentTranscript(ctx, run);
+      const action = await selectSubagentRun(ctx, runs);
+      if (!action) return;
+      if (action.kind === "open") {
+        const run = runs.find((candidate) => candidate.id === action.runId);
+        if (run) await showSubagentTranscript(ctx, run);
+        return;
+      }
+      await confirmAndCancelSubagents(ctx, runs, action);
     },
   });
 
@@ -101,6 +115,7 @@ export function registerSubagents(
     parameters: spawnSubagentSchema as TSchema,
     async execute(_toolCallId, params: SpawnSubagentInput, signal, onUpdate, ctx) {
       let run: SubagentRun | undefined;
+      let finalText = "";
       try {
         const mergedParams = applyPresetAgent(params, presets);
         // Ensure the proxy has re-registered provider base URLs before resolving, so
@@ -110,7 +125,15 @@ export function registerSubagents(
 
         assertProxyLoopbackIfRequired(selection, options.proxy);
         const policy = mergedParams.tools ?? "read-only";
-        run = createRun(mergedParams, selection, policy);
+        run = createRun(
+          nextRunId(
+            spawnCount++,
+            runs.map((existing) => existing.id),
+          ),
+          mergedParams,
+          selection,
+          policy,
+        );
         runs.unshift(run);
         pruneRuns(runs);
         updateUi(ctx);
@@ -151,7 +174,7 @@ export function registerSubagents(
           noTools: policy === "none" ? "all" : undefined,
         });
 
-        let finalText = "";
+        finalText = "";
         const unsubscribe = session.subscribe((event) => {
           if (!run) return;
           handleSubagentEvent(run, event);
@@ -170,6 +193,13 @@ export function registerSubagents(
             run.endedAt = Date.now();
             updateUi(ctx);
             void session.abort();
+          };
+          // Allow the operator to cancel this live run from `/subagents`, recording optional
+          // notes that are surfaced back to the parent agent in the tool result.
+          run.cancel = (notes) => {
+            if (!run || (run.status !== "running" && run.status !== "queued")) return;
+            if (notes) run.cancelNotes = notes;
+            abort();
           };
           if (signal?.aborted) {
             abort();
@@ -190,13 +220,15 @@ export function registerSubagents(
         }
 
         const text = finalText.trim() || "Subagent completed without a final text response.";
-        run.status = run.status === "aborted" ? "aborted" : "done";
+        const cancelled = run.status === "aborted";
+        run.status = cancelled ? "aborted" : "done";
         run.currentActivity = run.status;
         run.finalText = text;
         run.endedAt = Date.now();
+        run.cancel = undefined;
         updateUi(ctx);
         return {
-          content: [{ type: "text", text }],
+          content: [{ type: "text", text: cancelled ? formatCancellationResult(run, text) : text }],
           details: {
             id: run.id,
             model: selection.modelId,
@@ -204,16 +236,26 @@ export function registerSubagents(
             tools: policy,
             agent: run.presetAgentName,
             agentSource: run.presetAgentSource,
+            cancelled,
+            cancelNotes: run.cancelNotes,
           },
         };
       } catch (error) {
         const message = error instanceof Error ? error.message : String(error);
+        const cancelled = run?.status === "aborted" || signal?.aborted === true;
         if (run) {
-          run.status = signal?.aborted ? "aborted" : "error";
+          run.status = cancelled ? "aborted" : "error";
           run.currentActivity = run.status;
-          run.error = message;
+          if (!cancelled) run.error = message;
           run.endedAt = Date.now();
+          run.cancel = undefined;
           updateUi(ctx);
+        }
+        if (cancelled && run) {
+          return {
+            content: [{ type: "text", text: formatCancellationResult(run, finalText) }],
+            details: { id: run.id, cancelled: true, cancelNotes: run.cancelNotes },
+          };
         }
         return {
           content: [{ type: "text", text: message }],
@@ -238,5 +280,7 @@ export const __subagentsForTest = {
   loadPresetAgents,
   parsePresetAgentFile,
   applyPresetAgent,
+  formatCancellationResult,
+  nextRunId,
   MAX_PRESET_BODY_CHARS,
 } satisfies Record<string, unknown>;
