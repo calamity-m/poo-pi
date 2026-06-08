@@ -1,6 +1,16 @@
+import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import type { KeybindingsManager } from "@earendil-works/pi-coding-agent";
-import { truncateToWidth, visibleWidth, wrapTextWithAnsi } from "@earendil-works/pi-tui";
+import {
+  Container,
+  type SelectItem,
+  SelectList,
+  type SizeValue,
+  Text,
+  truncateToWidth,
+  visibleWidth,
+  wrapTextWithAnsi,
+} from "@earendil-works/pi-tui";
 
 /** Show a read-only, scrollable text panel as an overlay and resolve when dismissed. */
 export async function showPanel(
@@ -24,6 +34,74 @@ export async function showInlinePanel(
   await ctx.ui.custom<void>(
     (tui, theme, keybindings, done) =>
       new TextPanel(theme, keybindings, () => tui.requestRender(), done, title, lines),
+  );
+}
+
+/** Options for a shared select-list overlay panel. */
+export interface SelectPanelOptions {
+  /** Title rendered at the top of the selector. */
+  title: string;
+  /** Items shown in the selector. */
+  items: SelectItem[];
+  /** Optional footer hint; defaults to the standard select/close hint. */
+  footer?: string;
+  /** Maximum number of visible list items. */
+  visibleItems?: number;
+  /** Overlay width setting passed through to Pi's custom UI API. */
+  width?: SizeValue;
+  /** Overlay minimum width setting passed through to Pi's custom UI API. */
+  minWidth?: number;
+  /** Overlay maximum height setting passed through to Pi's custom UI API. */
+  maxHeight?: SizeValue;
+}
+
+/** Show a subagents-style select-list overlay and return the selected item value. */
+export async function showSelectPanel(
+  ctx: ExtensionContext,
+  options: SelectPanelOptions,
+): Promise<string | null> {
+  return await ctx.ui.custom<string | null>(
+    (tui, theme, _keybindings, done) => {
+      const list = new SelectList(
+        options.items,
+        options.visibleItems ?? Math.min(options.items.length, 12),
+        {
+          selectedPrefix: (text: string) => theme.fg("accent", text),
+          selectedText: (text: string) => theme.bg("selectedBg", theme.fg("accent", text)),
+          description: (text: string) => theme.fg("muted", text),
+          scrollInfo: (text: string) => theme.fg("dim", text),
+          noMatch: (text: string) => theme.fg("warning", text),
+        },
+      );
+      list.onSelect = (item) => done(item.value);
+      list.onCancel = () => done(null);
+
+      const container = new Container();
+      container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
+      container.addChild(new Text(theme.fg("accent", theme.bold(options.title)), 1, 1));
+      container.addChild(list);
+      container.addChild(
+        new Text(theme.fg("dim", options.footer ?? "↑↓ navigate • Enter select • Esc close"), 1, 1),
+      );
+      container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
+
+      return {
+        render: (width) => container.render(width),
+        invalidate: () => container.invalidate(),
+        handleInput: (data) => {
+          list.handleInput(data);
+          tui.requestRender();
+        },
+      };
+    },
+    {
+      overlay: true,
+      overlayOptions: {
+        width: options.width ?? "80%",
+        minWidth: options.minWidth ?? 56,
+        maxHeight: options.maxHeight ?? 18,
+      },
+    },
   );
 }
 

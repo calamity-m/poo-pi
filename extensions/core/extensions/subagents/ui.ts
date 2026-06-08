@@ -1,8 +1,6 @@
-import { DynamicBorder } from "@earendil-works/pi-coding-agent";
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
-import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 
-import { showInlinePanel, TextPanel } from "../../lib/ui/panel.ts";
+import { showInlinePanel, showSelectPanel, TextPanel } from "../../lib/ui/panel.ts";
 import { requestCoreFooterRender } from "../footer.ts";
 import { formatElapsed, formatRunSource, hasActiveRuns, statusIcon, truncate } from "./run.ts";
 import { buildTranscriptLines } from "./transcript.ts";
@@ -98,43 +96,15 @@ export async function selectSubagentRun(
     return null;
   }
 
-  return await ctx.ui.custom<string | null>(
-    (tui, theme, _keybindings, done) => {
-      const items: SelectItem[] = runs.map((run) => ({
-        value: run.id,
-        label: `${statusIcon(run.status)} ${run.id} ${run.status}`,
-        description: `${formatElapsed(run)} · ${formatRunSource(run)} · ${truncate(run.task, 90)}`,
-      }));
-      const list = new SelectList(items, Math.min(items.length, 12), {
-        selectedPrefix: (text: string) => theme.fg("accent", text),
-        selectedText: (text: string) => theme.bg("selectedBg", theme.fg("accent", text)),
-        description: (text: string) => theme.fg("muted", text),
-        scrollInfo: (text: string) => theme.fg("dim", text),
-        noMatch: (text: string) => theme.fg("warning", text),
-      });
-      list.onSelect = (item) => done(item.value);
-      list.onCancel = () => done(null);
-
-      const container = new Container();
-      container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
-      container.addChild(new Text(theme.fg("accent", theme.bold("subagent transcripts")), 1, 1));
-      container.addChild(list);
-      container.addChild(
-        new Text(theme.fg("dim", "↑↓ navigate • Enter open transcript • Esc close"), 1, 1),
-      );
-      container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
-
-      return {
-        render: (width) => container.render(width),
-        invalidate: () => container.invalidate(),
-        handleInput: (data) => {
-          list.handleInput(data);
-          tui.requestRender();
-        },
-      };
-    },
-    { overlay: true, overlayOptions: { width: "80%", minWidth: 56, maxHeight: 18 } },
-  );
+  return await showSelectPanel(ctx, {
+    title: "subagent transcripts",
+    items: runs.map((run) => ({
+      value: run.id,
+      label: `${statusIcon(run.status)} ${run.id} ${run.status}`,
+      description: `${formatElapsed(run)} · ${formatRunSource(run)} · ${truncate(run.task, 90)}`,
+    })),
+    footer: "↑↓ navigate • Enter open transcript • Esc close",
+  });
 }
 
 /** Open a colored, scrollable transcript panel for one subagent run. */
