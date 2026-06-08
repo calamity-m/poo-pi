@@ -70,7 +70,7 @@ In an interactive session, run `/core-settings` (no arguments) to open a setting
 - **Proxy audit redaction** — toggle `on` / `off`; persisted and applied to future proxy requests.
 - **Client TLS** — launch the secret-safe `/tls-setup` flow. The row shows only a redacted status (`loaded` / `unconfigured` / `error`, or `skipped`); passphrases, certificate bytes, and full target paths are never displayed or persisted.
 - **Skip client TLS** — toggle `on` / `off`. When `on` (persisted as `tls.skip` in `.pi/core-settings.json`), client TLS resolution is skipped at startup: no setup prompt and no client certificate is attached. Any previously configured target metadata is kept on disk, so turning skip off restores it without re-setup. Applies on the next startup.
-- **History search shortcut** — configure the `/history-search` shortcut, persisted as `historySearch.shortcut`. Applies after `/reload`.
+- **History search shortcut** — configure the `/history` shortcut, persisted as `historySearch.shortcut`. Applies after `/reload`.
 - **Core settings JSON** — open the raw `.pi/core-settings.json` editor for advanced changes.
 
 The scripted subcommands remain available: `/core-settings show` always prints the effective JSON (never the selector), `/core-settings edit` opens the unified JSON editor, and `/core-settings path` prints the file path. In a headless session, bare `/core-settings` falls back to showing the effective JSON.
@@ -107,7 +107,7 @@ If Pi has no canonical usage yet, or tokens are unknown immediately after compac
 
 ## History search
 
-Press `F8` or run `/history-search [query]` to search prior user messages. The live picker shows the top 10 matches as you type, covering the current session plus saved Pi sessions across projects. Picking a result only populates the editor with that message text; it does not switch sessions, fork, or send anything.
+Press `F8` or run `/history [query]` to search prior user messages. The live picker shows the top 10 matches as you type, covering the current session plus saved Pi sessions across projects. Picking a result only populates the editor with that message text; it does not switch sessions, fork, or send anything.
 
 To choose a different shortcut, set `{ "historySearch": { "shortcut": "ctrl+r" } }` in `.pi/core-settings.json`, then run `/reload`. For `Ctrl+R`, also rebind or disable Pi's built-in session rename shortcut in `~/.pi/agent/keybindings.json`, for example `{ "app.session.rename": ["f9"] }` or `{ "app.session.rename": [] }`.
 

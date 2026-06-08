@@ -64,9 +64,9 @@ function readHistorySearchShortcut(): string {
   );
 }
 
-/** Register reverse history search via `/history-search` and the configured shortcut. */
+/** Register reverse history search via `/history` and the configured shortcut. */
 export function registerHistorySearch(pi: ExtensionAPI): void {
-  pi.registerCommand("history-search", {
+  pi.registerCommand("history", {
     description: "Search old user messages and populate the editor with a selection",
     handler: async (args, ctx) => {
       await runHistorySearch(ctx, args.trim());
@@ -386,7 +386,7 @@ class HistorySearchComponent extends Container implements Focusable {
     }
 
     lines.push(this.searchTheme.fg("dim", "↑↓ navigate • enter populate editor • esc cancel"));
-    return this.chrome.render("history search", width, lines);
+    return this.chrome.render("history", width, lines);
   }
 
   /** Route navigation keys to the result list and all other text editing to the input. */

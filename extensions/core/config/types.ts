@@ -42,7 +42,7 @@ export interface CoreSubagentSettings {
 
 /** History search settings persisted by core. */
 export interface CoreHistorySearchSettings {
-  /** Keyboard shortcut registered by the history-search extension. */
+  /** Keyboard shortcut registered by the history command. */
   shortcut?: string;
 }
 
