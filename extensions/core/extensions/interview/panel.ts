@@ -193,6 +193,7 @@ export class InterviewPanel implements Focusable {
     const innerWidth = Math.max(10, width - 4);
     const border = (text: string) => this.theme.fg("border", text);
     const rawLines = preview
+      .replace(/\\n/g, "\n")
       .replace(/^\n+|\n+$/g, "")
       .split("\n")
       .slice(0, 14);

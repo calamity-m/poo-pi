@@ -85,6 +85,25 @@ test("InterviewPanel renders the interview title", () => {
   assert.ok(panel.render(80).some((line) => line.includes("Planning interview")));
 });
 
+test("InterviewPanel renders escaped preview newlines as line breaks", () => {
+  const { panel } = createPanel({
+    questions: [
+      {
+        id: "scope",
+        title: "Pick scope",
+        type: "single",
+        options: [{ value: "small", label: "Small", preview: "one\\ntwo" }],
+      },
+    ],
+  });
+
+  const lines = panel.render(100);
+
+  assert.ok(lines.some((line) => line.includes("one")));
+  assert.ok(lines.some((line) => line.includes("two")));
+  assert.ok(lines.every((line) => !line.includes("one\\ntwo")));
+});
+
 test("InterviewPanel submits selected answers", () => {
   const state = createPanel({
     questions: [
