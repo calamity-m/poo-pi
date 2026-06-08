@@ -102,7 +102,15 @@ test("InterviewPanel submits selected answers", () => {
 
   assert.deepEqual(state.result, {
     status: "submitted",
-    answers: [{ questionId: "scope", type: "single", selected: ["small"], custom: undefined }],
+    answers: [
+      {
+        questionId: "scope",
+        type: "single",
+        selected: ["small"],
+        custom: undefined,
+        notes: undefined,
+      },
+    ],
   });
 });
 
@@ -129,7 +137,9 @@ test("InterviewPanel treats custom text as exclusive for single-choice questions
 
   assert.deepEqual(state.result, {
     status: "submitted",
-    answers: [{ questionId: "scope", type: "single", selected: [], custom: "custom" }],
+    answers: [
+      { questionId: "scope", type: "single", selected: [], custom: "custom", notes: undefined },
+    ],
   });
 });
 
@@ -155,6 +165,91 @@ test("InterviewPanel can return a chat request for the active question", () => {
     question: "Pick scope",
     selected: ["small"],
     custom: undefined,
+    notes: undefined,
+  });
+});
+
+test("InterviewPanel returns only selected option notes keyed by option value", () => {
+  const state = createPanel({
+    questions: [
+      {
+        id: "scope",
+        title: "Pick scope",
+        type: "single",
+        options: [
+          { value: "small", label: "Small" },
+          { value: "robust", label: "Robust" },
+        ],
+      },
+    ],
+  });
+
+  assert.ok(state.panel.render(80).some((line) => line.includes("n to edit notes")));
+
+  state.panel.handleInput("n");
+  for (const char of "ignore me") state.panel.handleInput(char);
+  state.panel.handleInput("\r");
+  state.panel.handleInput("\x1b[B");
+  state.panel.handleInput("n");
+  for (const char of "ship fast") state.panel.handleInput(char);
+  state.panel.handleInput("\r");
+  state.panel.handleInput(" ");
+  state.panel.handleInput(" ");
+
+  assert.deepEqual(state.result, {
+    status: "submitted",
+    answers: [
+      {
+        questionId: "scope",
+        type: "single",
+        selected: ["robust"],
+        custom: undefined,
+        notes: { robust: "ship fast" },
+      },
+    ],
+  });
+});
+
+test("InterviewPanel returns multiple notes for selected multi-choice options", () => {
+  const state = createPanel({
+    questions: [
+      {
+        id: "scope",
+        title: "Pick scope",
+        type: "multi",
+        options: [
+          { value: "small", label: "Small" },
+          { value: "robust", label: "Robust" },
+        ],
+      },
+    ],
+  });
+
+  state.panel.handleInput("n");
+  for (const char of "first") state.panel.handleInput(char);
+  state.panel.handleInput("\r");
+  state.panel.handleInput(" ");
+  state.panel.handleInput("\x1b[B");
+  state.panel.handleInput("n");
+  for (const char of "second") state.panel.handleInput(char);
+  state.panel.handleInput("\r");
+  state.panel.handleInput(" ");
+  state.panel.handleInput("\x1b[B");
+  state.panel.handleInput("\x1b[B");
+  state.panel.handleInput(" ");
+  state.panel.handleInput(" ");
+
+  assert.deepEqual(state.result, {
+    status: "submitted",
+    answers: [
+      {
+        questionId: "scope",
+        type: "multi",
+        selected: ["small", "robust"],
+        custom: undefined,
+        notes: { small: "first", robust: "second" },
+      },
+    ],
   });
 });
 

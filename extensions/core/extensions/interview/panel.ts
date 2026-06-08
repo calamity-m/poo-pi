@@ -10,9 +10,12 @@ export class InterviewPanel implements Focusable {
   private questionIndex = 0;
   private selectedRow = 0;
   private typingCustom = false;
+  private typingNotes = false;
+  private noteTarget: Option | undefined;
   private reviewMode = false;
   private readonly selected = new Map<string, Set<string>>();
   private readonly custom = new Map<string, string>();
+  private readonly notes = new Map<string, Map<string, string>>();
   private readonly input: InterviewInput;
   private readonly tui: TUI;
   private readonly theme: Theme;
@@ -37,12 +40,17 @@ export class InterviewPanel implements Focusable {
       this.handleCustomInput(data);
       return;
     }
+    if (this.typingNotes) {
+      this.handleNotesInput(data);
+      return;
+    }
 
     if (matchesKey(data, "escape")) return this.done({ status: "cancelled" });
     if (matchesKey(data, "up")) this.move(-1);
     else if (matchesKey(data, "down")) this.move(1);
     else if (matchesKey(data, "tab") || matchesKey(data, "right")) this.next();
     else if (matchesKey(data, "shift+tab") || matchesKey(data, "left")) this.prev();
+    else if (data === "n" && !this.reviewMode) this.editNotes();
     else if (matchesKey(data, "return") || data === " ") this.activate();
     else return;
 
@@ -75,7 +83,7 @@ export class InterviewPanel implements Focusable {
       lines.push(...this.renderQuestionBody(q, selected, width, rows));
     }
     lines.push("");
-    lines.push(this.theme.fg("dim", "Enter select · Tab/←/→ navigate · Esc cancel"));
+    lines.push(this.theme.fg("dim", "Enter select · n notes · Tab/←/→ navigate · Esc cancel"));
     return lines.map((line) => truncateToWidth(line, width, ""));
   }
 
@@ -143,6 +151,7 @@ export class InterviewPanel implements Focusable {
       lines.push(this.formatOptionLine(label, width, active, checked));
       if (option.description)
         lines.push(this.formatOptionLine(`   ${option.description}`, width, active, checked, true));
+      lines.push(...this.renderOptionNotes(question, option, active, width));
     });
 
     if (question.allowCustom) {
@@ -268,6 +277,7 @@ export class InterviewPanel implements Focusable {
         question: q.title,
         selected: [...this.selectedFor(q)],
         custom: this.custom.get(q.id),
+        notes: this.selectedNotes(q),
       });
     }
     this.reviewMode = true;
@@ -282,6 +292,7 @@ export class InterviewPanel implements Focusable {
         type: question.type,
         selected: [...this.selectedFor(question)],
         custom: this.custom.get(question.id),
+        notes: this.selectedNotes(question),
       })),
     });
   }
@@ -300,6 +311,13 @@ export class InterviewPanel implements Focusable {
     else values.add(option.value);
   }
 
+  /** Start editing notes for the highlighted option entry. */
+  private editNotes(): void {
+    if (this.selectedRow >= this.question.options.length) return;
+    this.noteTarget = this.question.options[this.selectedRow];
+    this.typingNotes = true;
+  }
+
   /** Handle text editing keys while the custom answer editor is active. */
   private handleCustomInput(data: string): void {
     const q = this.question;
@@ -313,6 +331,27 @@ export class InterviewPanel implements Focusable {
       this.custom.set(q.id, value.slice(0, -1));
     } else if (data.length === 1 && data >= " ") {
       this.custom.set(q.id, `${this.custom.get(q.id) ?? ""}${data}`);
+    } else return;
+    this.tui.requestRender();
+  }
+
+  /** Handle text editing keys while the notes editor is active. */
+  private handleNotesInput(data: string): void {
+    const q = this.question;
+    const target = this.noteTarget;
+    if (!target) {
+      this.typingNotes = false;
+      return;
+    }
+
+    if (matchesKey(data, "escape")) this.typingNotes = false;
+    else if (matchesKey(data, "return")) {
+      this.typingNotes = false;
+    } else if (matchesKey(data, "backspace")) {
+      const value = this.noteFor(q, target.value);
+      this.setNote(q, target.value, value.slice(0, -1));
+    } else if (data.length === 1 && data >= " ") {
+      this.setNote(q, target.value, `${this.noteFor(q, target.value)}${data}`);
     } else return;
     this.tui.requestRender();
   }
@@ -347,7 +386,10 @@ export class InterviewPanel implements Focusable {
     return this.input.questions.flatMap((question) => {
       const labels = question.options
         .filter((option) => this.selectedFor(question).has(option.value))
-        .map((option) => option.label);
+        .map((option) => {
+          const notes = this.noteFor(question, option.value).trim();
+          return notes ? `${option.label} (notes: ${notes})` : option.label;
+        });
       const custom = this.custom.get(question.id)?.trim();
       const answer = [...labels, ...(custom ? [custom] : [])].join(", ");
       const line = answer
@@ -355,6 +397,54 @@ export class InterviewPanel implements Focusable {
         : ` ${this.theme.fg("accent", question.id)}${this.theme.fg("dim", ":")} ${this.theme.fg("muted", "—")}`;
       return [truncateToWidth(line, width, "")];
     });
+  }
+
+  /** Render notes attached to one option entry. */
+  private renderOptionNotes(
+    question: Question,
+    option: Option,
+    active: boolean,
+    width: number,
+  ): string[] {
+    const editing = this.typingNotes && this.noteTarget?.value === option.value;
+    const value = this.noteFor(question, option.value);
+    const cursor = editing ? "█" : "";
+    const lines = wrapCustomAnswer("   notes", `${value}${cursor}`, width)
+      .filter(() => value || editing)
+      .map((line) => this.formatOptionLine(line, width, active, false, true));
+    if (active)
+      lines.push(
+        this.theme.fg(
+          "dim",
+          editing ? "   Type notes · Enter save · Esc stop editing" : "   n to edit notes",
+        ),
+      );
+    return lines;
+  }
+
+  /** Return notes for selected options, keyed by option value. */
+  private selectedNotes(question: Question): Record<string, string> | undefined {
+    const values = this.selectedFor(question);
+    const entries = [...(this.notes.get(question.id)?.entries() ?? [])].filter(
+      ([value, notes]) => values.has(value) && Boolean(notes.trim()),
+    );
+    return entries.length > 0 ? Object.fromEntries(entries) : undefined;
+  }
+
+  /** Return one option's notes, if any. */
+  private noteFor(question: Question, value: string): string {
+    return this.notes.get(question.id)?.get(value) ?? "";
+  }
+
+  /** Set or remove one option's notes. */
+  private setNote(question: Question, value: string, notes: string): void {
+    let questionNotes = this.notes.get(question.id);
+    if (!questionNotes) {
+      questionNotes = new Map();
+      this.notes.set(question.id, questionNotes);
+    }
+    if (notes) questionNotes.set(value, notes);
+    else questionNotes.delete(value);
   }
 
   /** Label for the per-question chat action row. */

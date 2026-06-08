@@ -52,10 +52,19 @@ export interface Answer {
   selected: string[];
   /** Optional custom text entered by the user. */
   custom?: string;
+  /** Optional notes keyed by selected option value. */
+  notes?: Record<string, string>;
 }
 
 /** Result returned by the interactive interview panel. */
 export type InterviewResult =
   | { status: "submitted"; answers: Answer[] }
   | { status: "cancelled" }
-  | { status: "chat"; questionId: string; question: string; selected: string[]; custom?: string };
+  | {
+      status: "chat";
+      questionId: string;
+      question: string;
+      selected: string[];
+      custom?: string;
+      notes?: Record<string, string>;
+    };
