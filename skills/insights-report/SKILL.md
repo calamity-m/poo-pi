@@ -34,7 +34,10 @@ hold the intermediate artifacts.
 ```
 
 Let `WS` be a workspace directory, e.g. `WS=$(mktemp -d)/insights-report` or a path the
-user names. Substitute the real path to this skill's `scripts/` directory.
+user names. For durable private output, prefer a path such as
+`reports/insights/YYYY-MM-DD/` when the user asks to keep the report. Do not commit
+reports unless explicitly requested; they contain local usage metadata. Substitute
+the real path to this skill's `scripts/` directory.
 
 ### 1. Fetch sessions
 
@@ -61,8 +64,11 @@ the user the window you chose.
 python3 scripts/analyze.py --sessions "$WS/sessions.json" --out "$WS/analysis.json"
 ```
 
-Pure aggregation: totals, activity by day, hour-of-day histogram, per-agent and
-per-project breakdowns, and the highest-friction sessions. No model involved.
+Pure aggregation: totals, activity by day, hour-of-day histogram, session-length
+summary, compaction summary (total/auto/manual, flagging auto-compaction),
+best-effort token usage (work vs cache-read, per-agent), deterministic friction
+buckets, per-agent and per-project breakdowns, and the highest-friction sessions.
+No model involved.
 
 ### 3. Synthesize (sub-agents)
 
@@ -76,16 +82,26 @@ JSON.
    ls "$WS/digests" | wc -l
    python3 -c "import json;d=json.load(open('$WS/analysis.json'));print(json.dumps(d['top_friction_sessions'],indent=1))"
    ```
-2. Split the digest files into batches (aim for ~15–25 digests per sub-agent, or
-   one sub-agent per project for large histories). Spawn the sub-agents **in
-   parallel** using whatever sub-agent / task mechanism the host agent provides.
-   Give each the prompt in `references/synthesis-agent.md`, pointing it at its
-   batch of digest files and a per-batch output path
+2. Split the digest files into batches (aim for ~15–25 digests per sub-agent).
+   **Prefer batching by project** so a single sub-agent sees a project's whole
+   history — cross-session threads (one issue resumed across sessions) are only
+   visible within a batch, so splitting a project across batches hides them. Spawn
+   the sub-agents **in parallel** using whatever sub-agent / task mechanism the host
+   agent provides. Give each the prompt in `references/synthesis-agent.md`, pointing
+   it at its batch of digest files and a per-batch output path
    (e.g. `$WS/synth-batch-1.json`).
 3. Merge the per-batch JSON into a single `$WS/synthesis.json`. Deduplicate and
-   combine themes that clearly describe the same work; keep 4–8 themes total and
-   the 2–4 most important friction patterns. The merged file must match the
-   schema in `references/synthesis-agent.md`.
+   combine themes that clearly describe the same work; keep 4–8 themes total,
+   the 2–4 most important friction patterns, compact project insights, and
+   high-signal recommendations. Also combine `cross_session_threads` describing the
+   same issue (this is where threads split across batches get reunited) and keep the
+   clearest `fragmented_sessions`. The merged file must match the schema in
+   `references/synthesis-agent.md`. For a deterministic draft merge, run:
+   ```bash
+   python3 scripts/merge_synthesis.py "$WS"/synth-batch-*.json --out "$WS/synthesis.json"
+   ```
+   Review and polish the resulting wording yourself; the helper does not call a
+   model and intentionally groups conservatively.
 
 If the host agent cannot spawn sub-agents, fall back to reading digests yourself
 in small batches and writing `synthesis.json` directly — but prefer sub-agents,
@@ -99,10 +115,12 @@ is optional: `render` produces a complete report without it, just without the
 python3 scripts/render_report.py \
   --analysis "$WS/analysis.json" \
   --synthesis "$WS/synthesis.json" \
+  --batches "$WS/batches.json" \
   --out "$WS/report.html"
 ```
 
-Omit `--synthesis` if you skipped stage 3. The script fills
+Omit `--synthesis` if you skipped stage 3, and omit `--batches` if you did not
+record batch metadata. The script fills
 `assets/report_template.html` deterministically — the same inputs always yield
 the same HTML. Confirm there are no leftover `{{ }}` placeholders, then give the
 user the absolute path to `report.html` (and offer to open it).
@@ -110,8 +128,9 @@ user the absolute path to `report.html` (and offer to open it).
 ## Notes
 
 - **Privacy:** everything runs locally against the user's own session files; no
-  data leaves the machine. Don't paste raw transcript contents back to the user
-  unless they ask — the report and digests already summarize them.
+  data leaves the machine. The generated HTML also warns that reports may contain
+  project names and workflow details. Don't paste raw transcript contents back to
+  the user unless they ask — the report and digests already summarize them.
 - **Missing agents:** if an agent has no local history the fetch step simply
   reports `0 sessions` for it; that is expected, not an error.
 - **Friction semantics differ per agent** (e.g. Pi records cancels as a stop

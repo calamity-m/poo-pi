@@ -68,6 +68,49 @@ are attributed to that project's first session (approximate).
 > a populated database before trusting OpenCode numbers, and adjust the `data`
 > JSON field names if a newer OpenCode version changes them.
 
+## Compaction signals
+
+Compaction (summarizing and pruning earlier context) is detected per agent. Each
+parser fills a per-session `{total, auto, manual}` count; the digest header also
+surfaces it so synthesis sub-agents can correlate compactions with cross-session
+threads. **Only Claude Code records the trigger**, so for the other agents
+`auto`/`manual` stay 0 and the difference (`total - auto - manual`) is treated as
+unknown-trigger in `analyze.py`.
+
+| Agent       | Marker on disk                                                             | Auto vs manual?         |
+| ----------- | -------------------------------------------------------------------------- | ----------------------- |
+| Claude Code | `type: "system"`, `subtype: "compact_boundary"`, `compactMetadata.trigger` | Yes — `auto` / `manual` |
+| Codex       | `event_msg` payload `type: "context_compacted"`                            | No trigger recorded     |
+| Pi          | top-level line `type: "compaction"` (`tokensBefore`, `fromHook`)           | No trigger recorded     |
+| OpenCode    | assistant `message` row with `summary == true` (boolean)                   | No trigger recorded     |
+
+- **Auto-compaction is the notable signal** (it fires on context overflow mid-task
+  and can silently drop detail). Because only Claude Code distinguishes it, reports
+  flag auto-compaction counts confidently only for Claude Code; for other agents
+  the report shows total compactions without an auto/manual split.
+- OpenCode reuses the `summary` field on _user_ messages for an unrelated diff
+  object, so detection requires `role == "assistant"` and `summary is True`.
+
+## Token usage
+
+Token usage is tracked **best-effort** into a per-session `{input, output, cache_read}`
+tally (headline "work" = input + output; cache reads are kept separate because they
+inflate totals without being new work). It is **not billing-accurate** — accounting
+differs per agent and cache semantics vary.
+
+| Agent       | Source                                                                                             | Accumulation                                                                                                                              |
+| ----------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| Claude Code | per-assistant-message `message.usage` (`input_tokens`, `output_tokens`, `cache_read_input_tokens`) | summed per turn                                                                                                                           |
+| Pi          | per-assistant-message `message.usage` (`input`, `output`, `cacheRead`)                             | summed per turn                                                                                                                           |
+| OpenCode    | per-assistant `message.tokens` (`input`, `output`, `cache.read`)                                   | summed per turn                                                                                                                           |
+| Codex       | `event_msg` payload `token_count` → `info.total_token_usage`                                       | **cumulative** — last reading is the session total; `input_tokens` includes cached, so fresh input = `input_tokens − cached_input_tokens` |
+
+- Codex is the odd one out: its `token_count` is a running cumulative total, so the
+  parser **assigns** (not sums) from the latest reading. Codex also reports
+  `model_context_window`, which is not currently captured.
+- Reasoning tokens (Codex `reasoning_output_tokens`, OpenCode `reasoning`) are not
+  broken out separately; they fold into the model's reported output where included.
+
 ## Boilerplate filtering
 
 Agents inject scaffolding that masquerades as a user turn (environment context,

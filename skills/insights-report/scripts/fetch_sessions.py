@@ -63,6 +63,17 @@ class Session:
     cancels: int = 0
     rejections: int = 0
     errors: int = 0
+    # Context-compaction events. Only Claude Code records the trigger, so for the
+    # other agents auto/manual stay 0 and (total - auto - manual) is "unknown trigger".
+    compactions: int = 0
+    auto_compactions: int = 0
+    manual_compactions: int = 0
+    # Best-effort token usage. input/output are summed per-turn for Claude Code, Pi,
+    # and OpenCode, but assigned from the latest cumulative reading for Codex; cache
+    # reads are tracked separately because they inflate totals without being new work.
+    tokens_input: int = 0
+    tokens_output: int = 0
+    tokens_cache_read: int = 0
 
     @property
     def project(self) -> str:
@@ -172,6 +183,15 @@ def parse_claude_code(root: Path) -> list[Session]:
         for ev in _iter_jsonl(path):
             if ev.get("cwd") and not sess.cwd:
                 sess.cwd = ev["cwd"]
+            # Compaction is a system event, not a message; trigger is auto|manual.
+            if ev.get("type") == "system" and ev.get("subtype") == "compact_boundary":
+                sess.compactions += 1
+                trigger = (ev.get("compactMetadata") or {}).get("trigger")
+                if trigger == "auto":
+                    sess.auto_compactions += 1
+                elif trigger == "manual":
+                    sess.manual_compactions += 1
+                continue
             msg = ev.get("message")
             if not isinstance(msg, dict):
                 continue
@@ -185,6 +205,10 @@ def parse_claude_code(root: Path) -> list[Session]:
                 sess.cancels += text.count("[Request interrupted by user")
             sess.rejections += len(CC_REJECT.findall(text))
             if role == "assistant":
+                u = msg.get("usage") or {}
+                sess.tokens_input += u.get("input_tokens", 0)
+                sess.tokens_output += u.get("output_tokens", 0)
+                sess.tokens_cache_read += u.get("cache_read_input_tokens", 0)
                 sess.messages.append(Message("assistant", ts, text[:ASSISTANT_TEXT_CAP]))
                 for t in tools:
                     sess.messages.append(Message("tool", ts, tool_name=t))
@@ -224,6 +248,17 @@ def parse_codex(root: Path) -> list[Session]:
                 # turn_aborted is Codex's user-cancel signal.
                 if payload.get("type") == "turn_aborted":
                     sess.cancels += 1
+                # context_compacted marks a compaction; Codex records no trigger.
+                elif payload.get("type") == "context_compacted":
+                    sess.compactions += 1
+                # token_count reports cumulative usage; the last reading is the
+                # session total. Codex folds cached tokens into input_tokens.
+                elif payload.get("type") == "token_count":
+                    tu = (payload.get("info") or {}).get("total_token_usage") or {}
+                    cached = tu.get("cached_input_tokens", 0)
+                    sess.tokens_input = tu.get("input_tokens", 0) - cached
+                    sess.tokens_output = tu.get("output_tokens", 0)
+                    sess.tokens_cache_read = cached
             elif etype == "response_item":
                 ptype = payload.get("type")
                 if ptype == "message":
@@ -256,6 +291,10 @@ def parse_pi(root: Path) -> list[Session]:
                 sess.cwd = ev.get("cwd")
                 sess.session_id = ev.get("id", sess.session_id)
                 continue
+            if etype == "compaction":
+                # Pi records compaction but no auto/manual trigger (tokensBefore, fromHook only).
+                sess.compactions += 1
+                continue
             if etype != "message":
                 continue
             m = ev.get("message") or {}
@@ -271,6 +310,10 @@ def parse_pi(root: Path) -> list[Session]:
                     sess.cancels += 1
                 elif stop == "error":
                     sess.errors += 1
+                u = m.get("usage") or {}
+                sess.tokens_input += u.get("input", 0)
+                sess.tokens_output += u.get("output", 0)
+                sess.tokens_cache_read += u.get("cacheRead", 0)
                 sess.messages.append(Message("assistant", ts, text[:ASSISTANT_TEXT_CAP]))
                 for t in tools:
                     sess.messages.append(Message("tool", ts, tool_name=t))
@@ -325,6 +368,16 @@ def parse_opencode(db_path: Path) -> list[Session]:
             role = d.get("role", "")
             if d.get("modelID"):
                 s.models.add(d["modelID"])
+            # A compaction summary is an assistant message flagged summary == true
+            # (boolean). User messages reuse `summary` for an unrelated diff object,
+            # so require the literal True. OpenCode records no trigger.
+            if role == "assistant" and d.get("summary") is True:
+                s.compactions += 1
+            if role == "assistant":
+                tk = d.get("tokens") or {}
+                s.tokens_input += tk.get("input", 0)
+                s.tokens_output += tk.get("output", 0)
+                s.tokens_cache_read += (tk.get("cache") or {}).get("read", 0)
             if role in ("user", "assistant"):
                 s.messages.append(Message(role, ts, text=""))
 
@@ -419,6 +472,8 @@ def build_digest(s: Session) -> str:
         f"# {s.agent} session {s.session_id}",
         f"project: {s.project}  |  cwd: {s.cwd or '?'}",
         f"start: {_iso(s.start)}  |  cancels: {s.cancels}  rejections: {s.rejections}  errors: {s.errors}",
+        f"compactions: {s.compactions} (auto: {s.auto_compactions}, manual: {s.manual_compactions})",
+        f"tokens: {s.tokens_input + s.tokens_output} work ({s.tokens_input} in / {s.tokens_output} out, cache_read {s.tokens_cache_read})",
         "",
         "## Condensed transcript",
     ]
@@ -464,6 +519,17 @@ def session_record(s: Session, digest_rel: str) -> dict:
         "models": sorted(s.models),
         "counts": counts,
         "friction": {"cancels": s.cancels, "rejections": s.rejections, "errors": s.errors},
+        "compaction": {
+            "total": s.compactions,
+            "auto": s.auto_compactions,
+            "manual": s.manual_compactions,
+        },
+        "tokens": {
+            "input": s.tokens_input,
+            "output": s.tokens_output,
+            "cache_read": s.tokens_cache_read,
+            "total": s.tokens_input + s.tokens_output,
+        },
         "first_user_prompt": first_user[:USER_TEXT_CAP],
         "digest_file": digest_rel,
     }

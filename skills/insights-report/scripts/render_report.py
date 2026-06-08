@@ -3,15 +3,30 @@
 
 This is the deterministic presentation stage: given the same analysis.json and
 synthesis.json it always produces the same HTML. It fills assets/report_template.html
-with stat cards, an activity bar chart, an hour-of-day histogram, agent/project
-tables, and the friction section. The qualitative "What you worked on" and friction
-patterns come from synthesis.json (written by sub-agents); if it is absent those
-sections render a friendly placeholder so the report still stands on its own.
+with stat cards, activity charts, agent/project tables, session-length diagnostics,
+recommendations, and friction sections. Qualitative themes, project insights,
+recommendations, and friction patterns come from synthesis.json; if it is absent
+those sections render friendly placeholders so the report still stands on its own.
 
 synthesis.json shape (all optional):
   {
+    "schema_version": 3,
     "themes": [{"title": str, "summary": str, "projects": [str], "sessions": int}],
-    "friction_patterns": [{"pattern": str, "detail": str}]
+    "cross_session_threads": [{
+      "title": str, "summary": str, "projects": [str],
+      "session_count": int, "compactions": int
+    }],
+    "fragmented_sessions": [{
+      "session": str, "agent": str, "project": str, "topics": [str], "note": str
+    }],
+    "friction_patterns": [{"pattern": str, "detail": str}],
+    "recommendations": [{"title": str, "why": str, "next_step": str}],
+    "project_insights": [{
+      "project": str,
+      "dominant_theme": str,
+      "suggested_workflow_improvement": str
+    }],
+    "metadata": {"digest_count": int, "batch_count": int, "failed_batches": int}
   }
 """
 
@@ -27,18 +42,20 @@ TEMPLATE = Path(__file__).resolve().parent.parent / "assets" / "report_template.
 
 
 def esc(x) -> str:
+    """HTML-escape a value for safe insertion into the report template."""
     return html.escape(str(x), quote=True)
 
 
 def stat_cards(t: dict) -> str:
+    """Render the top-level metric cards."""
     cards = [
-        ("Sessions", t["sessions"], ""),
-        ("Active hours", t["duration_hours"], ""),
-        ("Active days", t["active_days"], ""),
-        ("Longest streak", f'{t["longest_streak_days"]}d', ""),
-        ("Projects", t["projects"], ""),
-        ("Prompts sent", t["user_prompts"], ""),
-        ("Tool calls", t["tool_calls"], ""),
+        ("Sessions", t.get("sessions", 0), ""),
+        ("Active hours", t.get("duration_hours", 0), ""),
+        ("Active days", t.get("active_days", 0), ""),
+        ("Longest streak", f'{t.get("longest_streak_days", 0)}d', ""),
+        ("Projects", t.get("projects", 0), ""),
+        ("Prompts sent", t.get("user_prompts", 0), ""),
+        ("Tool calls", t.get("tool_calls", 0), ""),
     ]
     return "".join(
         f'<div class="card {cls}"><div class="num">{esc(num)}</div><div class="lbl">{esc(lbl)}</div></div>'
@@ -47,10 +64,10 @@ def stat_cards(t: dict) -> str:
 
 
 def activity_chart(by_day: list[dict]) -> str:
+    """Render a sessions-per-day bar chart."""
     if not by_day:
         return '<span class="empty">No activity in range.</span>'
     peak = max((d["sessions"] for d in by_day), default=1) or 1
-    # Label sparsely so the x-axis stays readable.
     step = max(1, len(by_day) // 10)
     bars = []
     for i, d in enumerate(by_day):
@@ -64,6 +81,7 @@ def activity_chart(by_day: list[dict]) -> str:
 
 
 def hour_chart(by_hour: list[int]) -> str:
+    """Render a start-hour histogram."""
     peak = max(by_hour, default=1) or 1
     return "".join(
         f'<div class="hbar" style="height:{max(2, round(c / peak * 100))}%" '
@@ -73,6 +91,7 @@ def hour_chart(by_hour: list[int]) -> str:
 
 
 def agent_table(by_agent: list[dict]) -> str:
+    """Render the per-agent breakdown table."""
     rows = "".join(
         f"<tr><td>{esc(a['agent'])}</td>"
         f"<td class='num'>{a['sessions']}</td>"
@@ -92,12 +111,13 @@ def agent_table(by_agent: list[dict]) -> str:
 
 
 def project_table(by_project: list[dict]) -> str:
+    """Render the compact per-project table."""
     rows = "".join(
         f"<tr><td>{esc(p['project'])}</td>"
         f"<td class='num'>{p['sessions']}</td>"
         f"<td class='num'>{p['duration_hours']}</td>"
-        f"<td>{''.join(f'<span class=tag>{esc(a)}</span>' for a in p['agents'])}</td>"
-        f"<td class='num'>{p['cancels'] + p['rejections']}</td></tr>"
+        f"<td>{''.join(f'<span class=tag>{esc(a)}</span>' for a in p.get('agents', []))}</td>"
+        f"<td class='num'>{p.get('cancels', 0) + p.get('rejections', 0) + p.get('errors', 0)}</td></tr>"
         for p in by_project
     )
     return (
@@ -107,7 +127,95 @@ def project_table(by_project: list[dict]) -> str:
     )
 
 
+def session_length_section(lengths: dict) -> str:
+    """Render session-length diagnostics that indicate context-window hygiene."""
+    if not lengths:
+        return '<p class="empty">No session length data available.</p>'
+    cards = [
+        ("Average", f'{lengths.get("avg_min", 0)}m'),
+        ("Median", f'{lengths.get("median_min", 0)}m'),
+        ("P90", f'{lengths.get("p90_min", 0)}m'),
+        ("Longest", f'{lengths.get("max_min", 0)}m'),
+        ("2h+ sessions", lengths.get("over_120_min", 0)),
+    ]
+    cards_html = "".join(
+        f'<div class="card"><div class="num">{esc(v)}</div><div class="lbl">{esc(k)}</div></div>'
+        for k, v in cards
+    )
+    buckets = lengths.get("buckets", {})
+    bucket_html = "".join(
+        f'<span class="tag">{esc(k)}: {esc(v)}</span>'
+        for k, v in buckets.items()
+    )
+    note = lengths.get("interpretation") or "Long sessions can indicate deep flow, but repeated 2h+ sessions may deserve deliberate context resets."
+    return f'<div class="cards">{cards_html}</div><p class="note">{esc(note)}</p><div>{bucket_html}</div>'
+
+
+def _humanize(n: int | float) -> str:
+    """Compact large token counts (e.g. 1234567 -> '1.2M') for stat cards."""
+    n = int(n or 0)
+    if n >= 1_000_000:
+        return f"{n / 1_000_000:.1f}M"
+    if n >= 1_000:
+        return f"{n / 1_000:.1f}K"
+    return str(n)
+
+
+def tokens_section(tokens: dict, by_agent: list[dict]) -> str:
+    """Render best-effort token usage, keeping cache reads separate from work tokens."""
+    if not tokens:
+        return '<p class="empty">No token data available.</p>'
+    cards = [
+        ("Work tokens", _humanize(tokens.get("work", 0))),
+        ("Input", _humanize(tokens.get("input", 0))),
+        ("Output", _humanize(tokens.get("output", 0))),
+        ("Cache reads", _humanize(tokens.get("cache_read", 0))),
+        ("Avg / session", _humanize(tokens.get("avg_work_per_session", 0))),
+    ]
+    cards_html = "".join(
+        f'<div class="card"><div class="num">{esc(v)}</div><div class="lbl">{esc(k)}</div></div>'
+        for k, v in cards
+    )
+    tags = "".join(
+        f'<span class="tag">{esc(a["agent"])}: {esc(_humanize(a.get("tokens", 0)))}</span>'
+        for a in by_agent
+        if a.get("tokens", 0)
+    )
+    note = tokens.get("interpretation", "")
+    sub = tokens.get("note", "")
+    tags_html = f"<div>{tags}</div>" if tags else ""
+    sub_html = f'<p class="note">{esc(sub)}</p>' if sub else ""
+    return f'<div class="cards">{cards_html}</div><p class="note">{esc(note)}</p>{tags_html}{sub_html}'
+
+
+def compaction_section(compaction: dict, by_agent: list[dict]) -> str:
+    """Render compaction diagnostics, highlighting auto-compaction as a hygiene risk."""
+    if not compaction:
+        return '<p class="empty">No compaction data available.</p>'
+    cards = [
+        ("Compactions", compaction.get("total", 0), ""),
+        ("Auto", compaction.get("auto", 0), "warn" if compaction.get("auto") else ""),
+        ("Manual", compaction.get("manual", 0), ""),
+        ("Sessions affected", compaction.get("sessions_with_compaction", 0), ""),
+    ]
+    cards_html = "".join(
+        f'<div class="card {cls}"><div class="num">{esc(v)}</div><div class="lbl">{esc(k)}</div></div>'
+        for k, v, cls in cards
+    )
+    tags = "".join(
+        f'<span class="tag">{esc(a["agent"])}: {esc(a.get("compactions", 0))}'
+        + (f' (auto {esc(a["auto_compactions"])})' if a.get("auto_compactions") else "")
+        + "</span>"
+        for a in by_agent
+        if a.get("compactions", 0)
+    )
+    note = compaction.get("interpretation", "")
+    tags_html = f"<div>{tags}</div>" if tags else ""
+    return f'<div class="cards">{cards_html}</div><p class="note">{esc(note)}</p>{tags_html}'
+
+
 def friction_cards(friction: dict) -> str:
+    """Render top-level deterministic friction counters."""
     items = [
         ("Cancels", friction.get("cancels", 0), "warn"),
         ("Rejections", friction.get("rejections", 0), "bad"),
@@ -119,24 +227,42 @@ def friction_cards(friction: dict) -> str:
     )
 
 
+def friction_buckets_section(buckets: dict) -> str:
+    """Render deterministic friction buckets from analysis.json."""
+    if not buckets:
+        return ""
+    labels = {
+        "user_interruption_cancel": "User interruption / cancel",
+        "permission_rejection": "Permission rejection",
+        "tool_runtime_error": "Tool/runtime error",
+    }
+    return "".join(
+        f'<span class="tag friction-tag">{esc(labels.get(k, k))}: {esc(v)}</span>'
+        for k, v in buckets.items()
+        if v
+    )
+
+
 def friction_table(rows: list[dict]) -> str:
+    """Render the highest-friction sessions table."""
     if not rows:
         return '<p class="empty">No cancels, rejections, or errors in range — smooth sailing.</p>'
     body = "".join(
         f"<tr><td>{esc(s['agent'])}</td><td>{esc(s['project'])}</td>"
         f"<td class='num'>{s['cancels']}</td><td class='num'>{s['rejections']}</td>"
-        f"<td class='num'>{s['errors']}</td>"
+        f"<td class='num'>{s['errors']}</td><td class='num'>{s.get('duration_min', '')}</td>"
         f"<td class='prompt' title=\"{esc(s['first_user_prompt'])}\">{esc(s['first_user_prompt'])}</td></tr>"
         for s in rows
     )
     return (
         "<table><thead><tr><th>Agent</th><th>Project</th>"
         "<th class='num'>Cancels</th><th class='num'>Rej.</th><th class='num'>Err.</th>"
-        f"<th>Prompt</th></tr></thead><tbody>{body}</tbody></table>"
+        f"<th class='num'>Min.</th><th>Prompt</th></tr></thead><tbody>{body}</tbody></table>"
     )
 
 
 def themes_section(synth: dict | None) -> str:
+    """Render synthesized work themes."""
     themes = (synth or {}).get("themes") or []
     if not themes:
         return ('<p class="empty">No qualitative synthesis available. Run the sub-agent '
@@ -155,7 +281,112 @@ def themes_section(synth: dict | None) -> str:
     return "".join(out)
 
 
+def cross_session_threads_section(synth: dict | None) -> str:
+    """Render issues/efforts that spanned multiple sessions."""
+    threads = (synth or {}).get("cross_session_threads") or []
+    if not threads:
+        return ('<p class="empty">No cross-session threads identified — work mostly stayed within '
+                "single sessions, or synthesis was skipped.</p>")
+    out = []
+    for th in threads:
+        projects = "".join(f'<span class="tag">{esc(p)}</span>' for p in th.get("projects", []))
+        sub = []
+        if th.get("session_count"):
+            sub.append(f'{th["session_count"]} sessions')
+        if th.get("compactions"):
+            sub.append(f'{th["compactions"]} compactions')
+        sub_txt = f'<div class="sub">{" · ".join(sub)} {projects}</div>' if (sub or projects) else ""
+        out.append(
+            f'<div class="theme"><h3>{esc(th.get("title", "Thread"))}</h3>'
+            f'<div>{esc(th.get("summary", ""))}</div>{sub_txt}</div>'
+        )
+    return "".join(out)
+
+
+def fragmented_sessions_section(synth: dict | None) -> str:
+    """Render sessions that mixed multiple unrelated issues."""
+    frags = (synth or {}).get("fragmented_sessions") or []
+    if not frags:
+        return ('<p class="empty">No fragmented sessions flagged — sessions generally stayed on a '
+                "single topic.</p>")
+    out = []
+    for f in frags:
+        topics = "".join(f'<span class="tag">{esc(t)}</span>' for t in f.get("topics", []))
+        head = " · ".join(x for x in (f.get("agent"), f.get("project"), f.get("session")) if x)
+        out.append(
+            f'<div class="pattern"><h3>{esc(head or "Session")}</h3>'
+            f'<div>{esc(f.get("note", ""))}</div>'
+            + (f'<div class="sub">{topics}</div>' if topics else "")
+            + "</div>"
+        )
+    return "".join(out)
+
+
+def _deterministic_recommendations(analysis: dict) -> list[dict]:
+    """Create basic recommendations from deterministic counters when synthesis omits them."""
+    recs = []
+    lengths = analysis.get("session_lengths", {})
+    friction = analysis.get("friction", {})
+    if lengths.get("over_120_min", 0):
+        recs.append({
+            "title": "Reset context deliberately during long threads",
+            "why": f'{lengths.get("over_120_min")} sessions exceeded two hours, which can make context stale.',
+            "next_step": "When a task changes direction, ask the agent for a handoff summary and start a fresh session.",
+        })
+    if friction.get("cancels", 0):
+        recs.append({
+            "title": "Tighten prompts before interrupting",
+            "why": f'{friction.get("cancels", 0)} cancels suggest some runs went off-track or outlived their usefulness.',
+            "next_step": "For ambiguous requests, require assumptions and a short plan before implementation.",
+        })
+    if friction.get("rejections", 0) or friction.get("errors", 0):
+        recs.append({
+            "title": "Add safer pre-flight checks around tools",
+            "why": f'{friction.get("rejections", 0)} rejections and {friction.get("errors", 0)} errors point to avoidable tool friction.',
+            "next_step": "Have agents inspect permissions, paths, and validation commands before making risky edits or calls.",
+        })
+    return recs[:3]
+
+
+def recommendations_section(analysis: dict, synth: dict | None) -> str:
+    """Render concrete recommendations from synthesis.json or deterministic fallback rules."""
+    recs = (synth or {}).get("recommendations") or _deterministic_recommendations(analysis)
+    if not recs:
+        return '<p class="empty">No recommendations available for this range.</p>'
+    return "".join(
+        f'<div class="recommendation"><h3>{esc(r.get("title", "Recommendation"))}</h3>'
+        f'<p><strong>Why:</strong> {esc(r.get("why", ""))}</p>'
+        f'<p><strong>Next:</strong> {esc(r.get("next_step", ""))}</p></div>'
+        for r in recs
+    )
+
+
+def project_insight_cards(analysis: dict, synth: dict | None) -> str:
+    """Render compact per-project workflow insight cards."""
+    by_name = {p.get("project"): p for p in (synth or {}).get("project_insights", [])}
+    projects = analysis.get("by_project", [])[:6]
+    if not projects:
+        return '<p class="empty">No project activity in range.</p>'
+    cards = []
+    for p in projects:
+        name = p["project"]
+        insight = by_name.get(name, {})
+        friction = p.get("cancels", 0) + p.get("rejections", 0) + p.get("errors", 0)
+        common_agent = p.get("dominant_agent") or (p.get("agents") or ["?"])[0]
+        theme = insight.get("dominant_theme") or "See synthesized themes"
+        suggestion = insight.get("suggested_workflow_improvement") or "Use the friction/session-length sections to choose a workflow improvement."
+        cards.append(
+            f'<div class="project-card"><h3>{esc(name)}</h3>'
+            f'<div class="sub">{esc(p.get("sessions", 0))} sessions · {esc(p.get("duration_hours", 0))}h · {esc(common_agent)}</div>'
+            f'<p><strong>Dominant theme:</strong> {esc(theme)}</p>'
+            f'<p><strong>Friction score:</strong> {esc(friction)}</p>'
+            f'<p><strong>Improve:</strong> {esc(suggestion)}</p></div>'
+        )
+    return '<div class="project-grid">' + "".join(cards) + '</div>'
+
+
 def friction_patterns(synth: dict | None) -> str:
+    """Render synthesized friction patterns."""
     pats = (synth or {}).get("friction_patterns") or []
     if not pats:
         return ""
@@ -168,7 +399,22 @@ def friction_patterns(synth: dict | None) -> str:
     return "".join(out)
 
 
-def render(analysis: dict, synth: dict | None) -> str:
+def synthesis_metadata(analysis: dict, synth: dict | None, batches: list | None) -> str:
+    """Render hidden/details metadata about synthesis coverage and batching."""
+    meta = dict((synth or {}).get("metadata") or {})
+    if batches is not None:
+        meta.setdefault("batch_count", len(batches))
+        meta.setdefault("digest_count", sum(int(b.get("count", 0)) for b in batches if isinstance(b, dict)))
+        meta.setdefault("failed_batches", sum(1 for b in batches if isinstance(b, dict) and b.get("failed")))
+    meta.setdefault("synthesis_used", bool(synth))
+    meta.setdefault("schema_version", (synth or {}).get("schema_version", 1 if synth else None))
+    meta.setdefault("sessions_analyzed", analysis.get("totals", {}).get("sessions", 0))
+    rows = "".join(f'<li><strong>{esc(k)}:</strong> {esc(v)}</li>' for k, v in meta.items())
+    return f'<details class="metadata"><summary>Synthesis coverage metadata</summary><ul>{rows}</ul></details>'
+
+
+def render(analysis: dict, synth: dict | None, batches: list | None = None) -> str:
+    """Render complete HTML from analysis, optional synthesis, and optional batch metadata."""
     t = analysis["totals"]
     window = analysis.get("window", {})
     since = window.get("since")
@@ -188,10 +434,23 @@ def render(analysis: dict, synth: dict | None) -> str:
         "{{HOUR_CHART}}": hour_chart(analysis.get("by_hour", [0] * 24)),
         "{{AGENT_TABLE}}": agent_table(analysis.get("by_agent", [])),
         "{{PROJECT_TABLE}}": project_table(analysis.get("by_project", [])),
+        "{{SESSION_LENGTH_SECTION}}": session_length_section(analysis.get("session_lengths", {})),
+        "{{COMPACTION_SECTION}}": compaction_section(
+            analysis.get("compaction", {}), analysis.get("by_agent", [])
+        ),
+        "{{TOKENS_SECTION}}": tokens_section(
+            analysis.get("tokens", {}), analysis.get("by_agent", [])
+        ),
+        "{{PROJECT_INSIGHTS}}": project_insight_cards(analysis, synth),
         "{{THEMES_SECTION}}": themes_section(synth),
+        "{{CROSS_SESSION_THREADS}}": cross_session_threads_section(synth),
+        "{{FRAGMENTED_SESSIONS}}": fragmented_sessions_section(synth),
+        "{{RECOMMENDATIONS_SECTION}}": recommendations_section(analysis, synth),
         "{{FRICTION_CARDS}}": friction_cards(analysis.get("friction", {})),
+        "{{FRICTION_BUCKETS}}": friction_buckets_section(analysis.get("friction_buckets", {})),
         "{{FRICTION_PATTERNS}}": friction_patterns(synth),
         "{{FRICTION_TABLE}}": friction_table(analysis.get("top_friction_sessions", [])),
+        "{{SYNTHESIS_METADATA}}": synthesis_metadata(analysis, synth, batches),
     }
     out = TEMPLATE.read_text(encoding="utf-8")
     for k, v in repl.items():
@@ -200,9 +459,11 @@ def render(analysis: dict, synth: dict | None) -> str:
 
 
 def main() -> int:
+    """CLI entry point for rendering a report."""
     ap = argparse.ArgumentParser(description="Render analysis.json into a styled HTML report.")
     ap.add_argument("--analysis", required=True, help="Path to analysis.json from analyze.py")
-    ap.add_argument("--synthesis", help="Optional synthesis.json with themes/friction_patterns")
+    ap.add_argument("--synthesis", help="Optional synthesis.json with themes/recommendations")
+    ap.add_argument("--batches", help="Optional batches.json with synthesis batch metadata")
     ap.add_argument("--out", required=True, help="Path to write the HTML report")
     args = ap.parse_args()
 
@@ -210,8 +471,11 @@ def main() -> int:
     synth = None
     if args.synthesis and Path(args.synthesis).exists():
         synth = json.loads(Path(args.synthesis).read_text(encoding="utf-8"))
+    batches = None
+    if args.batches and Path(args.batches).exists():
+        batches = json.loads(Path(args.batches).read_text(encoding="utf-8"))
 
-    Path(args.out).write_text(render(analysis, synth), encoding="utf-8")
+    Path(args.out).write_text(render(analysis, synth, batches), encoding="utf-8")
     print(f"Wrote report -> {args.out}")
     return 0
 
