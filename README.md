@@ -62,6 +62,7 @@ themes/
 - [Prompt filler](docs/extensions/PROMPT_FILLER.md)
 - [Preset subagents](docs/extensions/PRESET_SUBAGENTS.md)
 - [Permissions](docs/extensions/PERMISSIONS.md)
+- [Interview](docs/extensions/INTERVIEW.md)
 
 ## Testing
 
