@@ -9,6 +9,7 @@ import {
 import type { ClientTlsProvider } from "../tls/index.ts";
 import {
   buildAuditRecord,
+  describeError,
   ensureAuditStore,
   nextAuditId,
   persistAuditRecord,
@@ -182,9 +183,4 @@ function readBody(req: IncomingMessage): Promise<Buffer | undefined> {
     req.on("end", () => resolve(chunks.length > 0 ? Buffer.concat(chunks) : undefined));
     req.on("error", reject);
   });
-}
-
-/** Render an unknown thrown value as a short message. */
-function describeError(error: unknown): string {
-  return error instanceof Error ? error.message : String(error);
 }

@@ -8,6 +8,7 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
+import { formatPercent, formatTokens } from "../lib/format.ts";
 import type { PermissionsController } from "./permissions/index.ts";
 import type { ProxyReadinessHandle } from "./proxy/index.ts";
 import type { SubagentsController } from "./subagents/index.ts";
@@ -290,21 +291,6 @@ function contextBackground(percent: number | null): string {
   if (percent >= 90) return "toolErrorBg";
   if (percent >= 70) return "toolPendingBg";
   return "toolSuccessBg";
-}
-
-/** Format percentages consistently for compact footer display. */
-function formatPercent(percent: number | null): string {
-  if (percent === null) return "?";
-  return `${percent < 10 && percent % 1 !== 0 ? percent.toFixed(1) : Math.round(percent)}%`;
-}
-
-/** Format token counts compactly for footer display. */
-function formatTokens(count: number | null): string {
-  if (count === null) return "?";
-  if (count < 1000) return String(Math.round(count));
-  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-  if (count < 1000000) return `${Math.round(count / 1000)}k`;
-  return `${(count / 1000000).toFixed(1)}M`;
 }
 
 /** Minimal theme surface used by this footer renderer. */

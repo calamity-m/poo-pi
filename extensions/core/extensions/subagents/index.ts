@@ -190,9 +190,10 @@ export function registerSubagents(
       let run: SubagentRun | undefined;
       try {
         const mergedParams = applyPresetAgent(params, presets);
-        let selection = await resolveSubagentModel(mergedParams, ctx, pi);
+        // Ensure the proxy has re-registered provider base URLs before resolving, so
+        // the selected model picks up the loopback baseUrl when a provider is proxied.
         await options.proxy?.ensure(ctx);
-        selection = await resolveSubagentModel(mergedParams, ctx, pi);
+        const selection = await resolveSubagentModel(mergedParams, ctx, pi);
 
         assertProxyLoopbackIfRequired(selection, options.proxy);
         const policy = mergedParams.tools ?? "read-only";

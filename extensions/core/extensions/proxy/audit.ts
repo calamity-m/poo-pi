@@ -279,6 +279,6 @@ async function readTailLines(path: string, maxBytes: number): Promise<string[]> 
 }
 
 /** Render an unknown thrown value as a short message. */
-function describeError(error: unknown): string {
+export function describeError(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }

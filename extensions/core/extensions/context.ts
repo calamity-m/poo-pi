@@ -3,12 +3,12 @@ import type {
   BuildSystemPromptOptions,
   ContextUsage,
   ExtensionAPI,
-  ExtensionCommandContext,
   Skill,
 } from "@earendil-works/pi-coding-agent";
 import { getAgentDir, loadSkills } from "@earendil-works/pi-coding-agent";
 import { estimateTokens, serializeConversation } from "@earendil-works/pi-agent-core";
 
+import { formatPercent, formatTokens } from "../lib/format.ts";
 import { showInlinePanel } from "../lib/ui/panel.ts";
 
 type CategoryId = "system" | "conversation" | "tool_results" | "summaries" | "unknown";
@@ -639,21 +639,6 @@ function statusFor(percent: number | null): ContextStatus {
   if (percent >= 90) return "compact soon";
   if (percent >= 70) return "watch";
   return "OK";
-}
-
-/** Format percentages consistently for compact terminal display. */
-function formatPercent(percent: number | null): string {
-  if (percent === null) return "?";
-  return `${percent < 10 && percent % 1 !== 0 ? percent.toFixed(1) : Math.round(percent)}%`;
-}
-
-/** Format token counts compactly for terminal display. */
-function formatTokens(count: number | null): string {
-  if (count === null) return "?";
-  if (count < 1000) return String(Math.round(count));
-  if (count < 10000) return `${(count / 1000).toFixed(1)}k`;
-  if (count < 1000000) return `${Math.round(count / 1000)}k`;
-  return `${(count / 1000000).toFixed(1)}M`;
 }
 
 /** Truncate a string without leaking full bodies into the compact report. */
