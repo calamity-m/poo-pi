@@ -91,10 +91,11 @@ export class TextPanel {
   render(width: number): string[] {
     if (width < 4) return [truncateToWidth(this.title, width, "")];
 
-    const innerWidth = width - 2;
+    const borderInnerWidth = width - 2;
+    const contentWidth = width;
     const footer = "↑/↓ PgUp/PgDn scroll • Esc/Enter/q close";
     const wrappedLines = this.lines.flatMap((line) =>
-      line === "" ? [""] : wrapTextWithAnsi(line, innerWidth),
+      line === "" ? [""] : wrapTextWithAnsi(line, contentWidth),
     );
     this.viewportHeight = Math.max(1, 24 - 3);
     this.totalRenderedLines = wrappedLines.length;
@@ -104,9 +105,11 @@ export class TextPanel {
 
     return [
       this.borderLine(this.title, width),
-      ...window.map((line) => this.frameLine(truncateToWidth(line, innerWidth, ""), innerWidth)),
-      this.frameLine(this.theme.fg("dim", truncateToWidth(footer, innerWidth, "")), innerWidth),
-      this.theme.fg("border", `└${"─".repeat(innerWidth)}┘`),
+      ...window.map((line) =>
+        this.frameLine(truncateToWidth(line, contentWidth, ""), contentWidth),
+      ),
+      this.frameLine(this.theme.fg("dim", truncateToWidth(footer, contentWidth, "")), contentWidth),
+      this.theme.fg("border", `└${"─".repeat(borderInnerWidth)}┘`),
     ];
   }
 
@@ -121,10 +124,10 @@ export class TextPanel {
     return this.theme.fg("border", `┌${label}${rule}┐`);
   }
 
-  /** Render one content line with vertical borders and right padding. */
-  private frameLine(text: string, innerWidth: number): string {
-    const pad = " ".repeat(Math.max(0, innerWidth - visibleWidth(text)));
-    return `${this.theme.fg("border", "│")}${text}${pad}${this.theme.fg("border", "│")}`;
+  /** Render one content line with right padding and no side borders. */
+  private frameLine(text: string, contentWidth: number): string {
+    const pad = " ".repeat(Math.max(0, contentWidth - visibleWidth(text)));
+    return `${text}${pad}`;
   }
 
   /** Shift the visible window, clamped to the content bounds. */
