@@ -28,9 +28,11 @@ import {
   isWithinDir,
 } from "../extensions/core/extensions/permissions/policy.ts";
 import {
+  defaultConfigFilePath,
   parseAndCompile,
   readPermissionState,
   validateConfig,
+  writeDefaultPermissionMode,
   writePermissionState,
 } from "../extensions/core/extensions/permissions/persistence.ts";
 
@@ -428,13 +430,26 @@ console.log("\n6. persistence (read/write/compile)");
 
 {
   const tmpDir = mkdtempSync(join(tmpdir(), "poo-pi-permissions-"));
+  const tmpAgentDir = mkdtempSync(join(tmpdir(), "poo-pi-agent-"));
+  const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = tmpAgentDir;
   mkdirSync(join(tmpDir, ".pi"));
 
   try {
-    // Read non-existent → defaults
+    // Read non-existent → built-in defaults
     const defaults = await readPermissionState(tmpDir);
     assertEqual(defaults.mode, "trusted", "missing config → default mode 'trusted'");
     assertEqual(defaults.rules.length, 0, "missing config → empty rules");
+
+    // User-scoped default mode applies only when no project config exists.
+    await writeDefaultPermissionMode("permissive");
+    const globalDefault = await readPermissionState(tmpDir);
+    assertEqual(globalDefault.mode, "permissive", "missing project config → user default mode");
+    assertEqual(
+      defaultConfigFilePath(),
+      join(tmpAgentDir, "core-settings.json"),
+      "default path honors PI_CODING_AGENT_DIR",
+    );
 
     // Write and read back
     const state = makeState({
@@ -453,10 +468,10 @@ console.log("\n6. persistence (read/write/compile)");
     assertEqual(read.remembered.length, 1, "persisted grant round-trips");
     assertEqual(read.remembered[0].dirPrefix, "/project/src", "persisted grant dirPrefix");
 
-    // Malformed unified JSON → defaults
+    // Malformed unified JSON → user default when available
     writeFileSync(join(tmpDir, ".pi", "core-settings.json"), "{ bad json");
     const fallback = await readPermissionState(tmpDir);
-    assertEqual(fallback.mode, "trusted", "malformed core settings JSON → default mode");
+    assertEqual(fallback.mode, "permissive", "malformed core settings JSON → user default mode");
 
     // Invalid regex in rule → dropped with warning
     const withBadRegex = parseAndCompile({
@@ -480,7 +495,10 @@ console.log("\n6. persistence (read/write/compile)");
     const invalidShape = validateConfig("not an object");
     assert(typeof invalidShape === "string", "validateConfig: non-object returns error string");
   } finally {
+    if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
     rmSync(tmpDir, { recursive: true });
+    rmSync(tmpAgentDir, { recursive: true });
   }
 }
 

@@ -1,7 +1,12 @@
 import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 
-import { readCorePermissionConfig, writeCorePermissionConfig } from "../../config/persistence.ts";
-import { coreSettingsPath } from "../../config/paths.ts";
+import {
+  readCorePermissionConfig,
+  readGlobalCorePermissionConfig,
+  writeCorePermissionConfig,
+  writeGlobalCorePermissionConfig,
+} from "../../config/persistence.ts";
+import { coreSettingsPath, globalCoreSettingsPath } from "../../config/paths.ts";
 
 import type {
   CompiledGrant,
@@ -25,13 +30,31 @@ export function configFilePath(cwd: string): string {
   return coreSettingsPath(cwd);
 }
 
+/** Return the absolute path to the user-scoped core settings defaults file. */
+export function defaultConfigFilePath(): string {
+  return globalCoreSettingsPath();
+}
+
 /**
  * Read permissions from `.pi/core-settings.json` and return compiled in-memory state.
  * Invalid regex patterns are dropped with a console warning rather than crashing.
  */
 export async function readPermissionState(cwd: string): Promise<PermissionState> {
   const config = await readCorePermissionConfig(cwd);
-  return config ? parseAndCompile(config) : { ...DEFAULTS, rules: [], remembered: [] };
+  if (config) return parseAndCompile(config);
+
+  const defaultMode = await readDefaultPermissionMode();
+  return { ...DEFAULTS, mode: defaultMode, rules: [], remembered: [] };
+}
+
+/** Read the effective default mode used when a project has no permissions config. */
+export async function readDefaultPermissionMode(): Promise<PermissionMode> {
+  return (await readGlobalCorePermissionConfig())?.mode ?? DEFAULTS.mode;
+}
+
+/** Persist the user-scoped default mode used when a project has no permissions config. */
+export async function writeDefaultPermissionMode(mode: PermissionMode): Promise<void> {
+  await writeGlobalCorePermissionConfig({ mode, rules: [], remembered: [] });
 }
 
 /**

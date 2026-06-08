@@ -1,6 +1,6 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
-import { showInlinePanel } from "../../lib/ui/panel.ts";
+import { showInlinePanel, showSelectPanel } from "../../lib/ui/panel.ts";
 import {
   SAFE_ALLOW_TOOLS,
   TRUSTED_BASH_ALLOW_PATTERNS,
@@ -8,21 +8,29 @@ import {
 } from "./policy.ts";
 import {
   configFilePath,
+  defaultConfigFilePath,
+  readDefaultPermissionMode,
   toRawGrants,
   toRawRules,
   validateConfig,
+  writeDefaultPermissionMode,
   writePermissionState,
 } from "./persistence.ts";
 import type { PermissionMode, PermissionState } from "./types.ts";
 
 const MODES: PermissionMode[] = ["safe", "trusted", "permissive", "open"];
 
+type PermissionPickerResult =
+  | { kind: "mode"; mode: PermissionMode }
+  | { kind: "default"; mode: PermissionMode };
+
 /**
- * Register the `/permissions [safe|trusted|permissive|open|edit]` operator command.
+ * Register the `/permissions [safe|trusted|permissive|open|edit|default]` operator command.
  *
  * - No args / unknown arg: open mode picker then show showcase.
  * - `safe`, `trusted`, `permissive`, `open`: set mode directly and show showcase.
  * - `edit`: open raw-JSON editor; validate before writing.
+ * - `default [mode]`: save the user-scoped default mode for new projects.
  *
  * The showcase content is derived from the policy engine's own constants so it
  * cannot drift from actual enforcement behavior.
@@ -44,16 +52,97 @@ export function registerPermissionsCommand(pi: ExtensionAPI, state: PermissionSt
         return;
       }
 
-      // No arg or unrecognized — show the picker
-      const labels = MODES.map((m) => (m === state.mode ? `${m} (current)` : m));
-      const choice = await ctx.ui.select("Select permission mode", labels, { signal: ctx.signal });
-      if (!choice) return; // cancelled
+      if (sub === "default") {
+        await saveDefaultMode(ctx, state.mode);
+        return;
+      }
 
-      const picked = MODES.find((m) => choice.startsWith(m));
-      if (!picked) return;
-      await applyMode(ctx, state, picked);
+      if (sub.startsWith("default ")) {
+        const mode = sub.slice("default ".length).trim();
+        if (isPermissionMode(mode)) await saveDefaultMode(ctx, mode);
+        else ctx.ui.notify("usage: /permissions default [safe|trusted|permissive|open]", "warning");
+        return;
+      }
+
+      // No arg or unrecognized — show the picker.
+      const choice = await pickPermissionMode(ctx, state);
+      if (!choice) return;
+      if (choice.kind === "default") {
+        await saveDefaultMode(ctx, choice.mode);
+        return;
+      }
+      await applyMode(ctx, state, choice.mode);
     },
   });
+}
+
+/** Return whether a string is one of the supported permission modes. */
+function isPermissionMode(value: string): value is PermissionMode {
+  return value === "safe" || value === "trusted" || value === "permissive" || value === "open";
+}
+
+/** Pick a project mode, with `d` saving the highlighted mode as the user default. */
+async function pickPermissionMode(
+  ctx: ExtensionCommandContext,
+  state: PermissionState,
+): Promise<PermissionPickerResult | null> {
+  const defaultMode = await readDefaultPermissionMode();
+
+  if (!ctx.hasUI) {
+    const labels = MODES.map((mode) => formatModeLabel(mode, state.mode, defaultMode));
+    const choice = await ctx.ui.select("Select permission mode", labels, { signal: ctx.signal });
+    const picked = choice ? MODES.find((m) => choice.startsWith(m)) : undefined;
+    return picked ? { kind: "mode", mode: picked } : null;
+  }
+
+  return await showSelectPanel<PermissionPickerResult>(ctx, {
+    title: "Select permission mode",
+    items: MODES.map((mode) => ({
+      label: formatModeLabel(mode, state.mode, defaultMode),
+      value: mode,
+      description: formatModeDescription(mode, state.mode, defaultMode),
+    })),
+    footer: "↑↓ navigate • Enter set project mode • d save selected as default • Esc close",
+    onSelect: (item) => ({ kind: "mode", mode: item.value as PermissionMode }),
+    onKey: (data, item) => {
+      if (data !== "d") return undefined;
+      return item ? { kind: "default", mode: item.value as PermissionMode } : null;
+    },
+  });
+}
+
+/** Format a permission mode with default/current markers for the picker. */
+function formatModeLabel(
+  mode: PermissionMode,
+  currentMode: PermissionMode,
+  defaultMode: PermissionMode,
+): string {
+  const markers: string[] = [];
+  if (mode === defaultMode) markers.push("default");
+  if (mode === currentMode) markers.push("current");
+  return markers.length > 0 ? `${mode} (${markers.join(") (")})` : mode;
+}
+
+/** Describe why a permission mode is specially marked in the picker. */
+function formatModeDescription(
+  mode: PermissionMode,
+  currentMode: PermissionMode,
+  defaultMode: PermissionMode,
+): string | undefined {
+  if (mode === defaultMode && mode === currentMode)
+    return "Default for new projects and active project mode";
+  if (mode === defaultMode) return "Default for new projects";
+  if (mode === currentMode) return "Active project mode";
+  return undefined;
+}
+
+/** Save the user-scoped default mode used by projects without local permissions config. */
+async function saveDefaultMode(ctx: ExtensionCommandContext, mode: PermissionMode): Promise<void> {
+  await writeDefaultPermissionMode(mode);
+  ctx.ui.notify(
+    `permissions: default mode for new projects set to ${mode} (${defaultConfigFilePath()})`,
+    "info",
+  );
 }
 
 /** Apply a new mode: update process-global state, persist, and show showcase. */

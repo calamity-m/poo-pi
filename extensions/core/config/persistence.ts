@@ -12,20 +12,27 @@ import type {
 } from "../extensions/permissions/types.ts";
 import type { SourceTarget } from "../extensions/tls/types.ts";
 import { createDefaultCoreSettings } from "./defaults.ts";
-import { coreSettingsPath, cwdFromProxyAuditDir } from "./paths.ts";
+import { coreSettingsPath, cwdFromProxyAuditDir, globalCoreSettingsPath } from "./paths.ts";
 import type { CoreHistorySearchSettings, CoreSettings, CoreSubagentSettings } from "./types.ts";
 
 /** Read unified core settings from `.pi/core-settings.json`, returning defaults when absent or malformed. */
 export async function readCoreSettings(cwd: string): Promise<CoreSettings> {
-  return parseCoreSettings(await readJson(coreSettingsPath(cwd))) ?? createDefaultCoreSettings();
+  return await readCoreSettingsFile(coreSettingsPath(cwd));
+}
+
+/** Read user-scoped core settings from `~/.pi/agent/core-settings.json`. */
+export async function readGlobalCoreSettings(): Promise<CoreSettings> {
+  return await readCoreSettingsFile(globalCoreSettingsPath());
 }
 
 /** Validate and persist unified core settings to `.pi/core-settings.json`. */
 export async function writeCoreSettings(cwd: string, settings: CoreSettings): Promise<void> {
-  const normalized = parseCoreSettings(settings) ?? createDefaultCoreSettings();
-  const path = coreSettingsPath(cwd);
-  await mkdir(dirname(path), { recursive: true });
-  await writeFile(path, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 });
+  await writeCoreSettingsFile(coreSettingsPath(cwd), settings);
+}
+
+/** Validate and persist user-scoped core settings to `~/.pi/agent/core-settings.json`. */
+export async function writeGlobalCoreSettings(settings: CoreSettings): Promise<void> {
+  await writeCoreSettingsFile(globalCoreSettingsPath(), settings);
 }
 
 /** Read the permissions section from unified core settings. */
@@ -33,6 +40,13 @@ export async function readCorePermissionConfig(
   cwd: string,
 ): Promise<PersistedPermissionConfig | undefined> {
   return (await readCoreSettings(cwd)).permissions;
+}
+
+/** Read the user-scoped permissions defaults from global core settings. */
+export async function readGlobalCorePermissionConfig(): Promise<
+  PersistedPermissionConfig | undefined
+> {
+  return (await readGlobalCoreSettings()).permissions;
 }
 
 /** Persist the permissions section in unified core settings. */
@@ -43,6 +57,15 @@ export async function writeCorePermissionConfig(
   const settings = await readCoreSettings(cwd);
   settings.permissions = permissions;
   await writeCoreSettings(cwd, settings);
+}
+
+/** Persist the user-scoped permissions defaults in global core settings. */
+export async function writeGlobalCorePermissionConfig(
+  permissions: PersistedPermissionConfig,
+): Promise<void> {
+  const settings = await readGlobalCoreSettings();
+  settings.permissions = permissions;
+  await writeGlobalCoreSettings(settings);
 }
 
 /** Read non-secret client TLS target metadata from unified core settings. */
@@ -183,6 +206,18 @@ export function parseCoreSettings(value: unknown): CoreSettings | undefined {
   if (historySearch) out.historySearch = historySearch;
 
   return out;
+}
+
+/** Read and parse one core settings file, returning defaults when absent or malformed. */
+async function readCoreSettingsFile(path: string): Promise<CoreSettings> {
+  return parseCoreSettings(await readJson(path)) ?? createDefaultCoreSettings();
+}
+
+/** Validate and write one core settings file with private file permissions. */
+async function writeCoreSettingsFile(path: string, settings: CoreSettings): Promise<void> {
+  const normalized = parseCoreSettings(settings) ?? createDefaultCoreSettings();
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, `${JSON.stringify(normalized, null, 2)}\n`, { mode: 0o600 });
 }
 
 /** Read and parse a JSON file, returning undefined for absence or malformed content. */
