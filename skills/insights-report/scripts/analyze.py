@@ -122,7 +122,9 @@ def analyze(index: dict) -> dict:
         if (s["friction"]["cancels"] + s["friction"]["rejections"] + s["friction"]["errors"]) > 0
     ][:15]
 
-    busiest = max(by_day.items(), key=lambda kv: kv[1]["sessions"], default=(None, None))
+    busiest_date, busiest_stats = max(
+        by_day.items(), key=lambda kv: kv[1]["sessions"], default=(None, None)
+    )
 
     return {
         "generated_at": dt.datetime.now(dt.timezone.utc).isoformat(),
@@ -140,8 +142,8 @@ def analyze(index: dict) -> dict:
         },
         "friction": totals_friction,
         "busiest_day": (
-            {"date": busiest[0].isoformat(), "sessions": busiest[1]["sessions"]}
-            if busiest[0] else None
+            {"date": busiest_date.isoformat(), "sessions": busiest_stats["sessions"]}
+            if busiest_date is not None and busiest_stats is not None else None
         ),
         "by_agent": sorted(
             ({"agent": k, **v, "duration_hours": round(v["duration_hours"], 1)}

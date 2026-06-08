@@ -30,7 +30,7 @@ def esc(x) -> str:
     return html.escape(str(x), quote=True)
 
 
-def stat_cards(t: dict, friction: dict) -> str:
+def stat_cards(t: dict) -> str:
     cards = [
         ("Sessions", t["sessions"], ""),
         ("Active hours", t["duration_hours"], ""),
@@ -136,7 +136,7 @@ def friction_table(rows: list[dict]) -> str:
     )
 
 
-def themes_section(synth: dict) -> str:
+def themes_section(synth: dict | None) -> str:
     themes = (synth or {}).get("themes") or []
     if not themes:
         return ('<p class="empty">No qualitative synthesis available. Run the sub-agent '
@@ -155,7 +155,7 @@ def themes_section(synth: dict) -> str:
     return "".join(out)
 
 
-def friction_patterns(synth: dict) -> str:
+def friction_patterns(synth: dict | None) -> str:
     pats = (synth or {}).get("friction_patterns") or []
     if not pats:
         return ""
@@ -183,7 +183,7 @@ def render(analysis: dict, synth: dict | None) -> str:
         "{{TITLE}}": "Coding Agent Insights",
         "{{SUBTITLE}}": esc(subtitle),
         "{{GENERATED_AT}}": esc(analysis.get("generated_at", dt.datetime.now().isoformat())[:19]),
-        "{{STAT_CARDS}}": stat_cards(t, analysis.get("friction", {})),
+        "{{STAT_CARDS}}": stat_cards(t),
         "{{ACTIVITY_CHART}}": activity_chart(analysis.get("by_day", [])),
         "{{HOUR_CHART}}": hour_chart(analysis.get("by_hour", [0] * 24)),
         "{{AGENT_TABLE}}": agent_table(analysis.get("by_agent", [])),
