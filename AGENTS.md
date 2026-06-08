@@ -35,6 +35,7 @@ When editing existing code:
 - Do not improve adjacent code, comments, or formatting.
 - Do not refactor things that are not broken.
 - Match existing style, even if you would do it differently.
+- If a targeted fix would create throwaway code, duplicate shared behavior, or hide a user-facing surface, pause and name the tradeoff before choosing the smaller change.
 - If you notice unrelated dead code or stale metadata, mention it; do not delete it unless asked.
 
 When your changes create orphans, remove imports, variables, functions, or files made unused by your changes. Do not remove pre-existing dead code unless asked.
@@ -99,7 +100,7 @@ A `prek` pre-commit hook (`prek.toml`) runs `npm run format`, `npm run lint`, an
 
 ```text
 extensions/   -> Pi extension entry points; `core/index.ts` registers the bundled core commands, tools, and hooks.
-extensions/core/ -> Packaged core extension subtree currently present as placeholder/empty TypeScript files.
+extensions/core/ -> Production core extension subtree; keep shared helpers in `lib/` and feature commands in `extensions/`.
 skills/       -> Agent skill directories; each skill is a directory with `SKILL.md` frontmatter.
 prompts/      -> Top-level Markdown prompt templates exposed as slash commands.
 themes/       -> Pi theme JSON files included in the package manifest.
@@ -122,10 +123,14 @@ npm pack --dry-run -> package.json files list -> publishable tarball contents
 
 ## 9. Project-Specific Notes
 
-- This is an installable Pi package; keep Pi-provided imports such as `@earendil-works/pi-coding-agent` and `typebox` as peer dependencies with `"*"` unless packaging needs change.
+- This is a production installable Pi package, not a throwaway test repo; check Pi docs and existing core patterns before changing Pi APIs, package metadata, or TUI behavior.
+- Keep Pi-provided imports such as `@earendil-works/pi-coding-agent` and `typebox` as peer dependencies with `"*"` unless packaging needs change.
+- Shared TUI/panel behavior belongs in `extensions/core/lib/ui/`; do not make one extension import another extension's UI helper or fork UX without a clear reason.
+- For TUI changes, check before editing: shared helper vs one-off, keyboard behavior, visual consistency with existing panels, history/model-output side effects, automated test coverage, and whether a live smoke check is needed.
 - Prompt files are non-recursive: only top-level `prompts/*.md` become slash commands.
 - Skill names should stay lowercase kebab-case, and each skill directory must contain `SKILL.md` with useful frontmatter.
 - Theme JSON must keep the required Pi color-token shape; validate JSON before packaging.
+- For user-facing extension changes, add or update automated tests where possible, run relevant checks, and use live TUI smoke checks for visual/keybinding behavior when practical.
 - Treat package resource lists carefully when editing package metadata; prompt discovery is non-recursive and skills require a `SKILL.md` file.
 
 ---
