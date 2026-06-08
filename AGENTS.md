@@ -91,7 +91,7 @@ Current runnable checks:
 - `npm run validate:json` validates `package.json` and theme JSON files.
 - `npm run pack:dry-run` verifies the package contents npm would publish.
 
-There is no pre-commit config in this repo yet. If checks are repeatedly missed, add a small pre-commit hook that runs the npm scripts above.
+A `prek` pre-commit hook (`prek.toml`) runs `npm run format`, `npm run lint`, and `npm test` (which includes `tsc --noEmit`) on each commit, alongside basic file-hygiene checks (trailing whitespace, end-of-file, merge-conflict, private-key, and large-file guards).
 
 ## 8. Repository Map
 
