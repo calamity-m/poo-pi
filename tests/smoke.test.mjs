@@ -5,7 +5,7 @@ import { join, resolve } from "node:path";
 import test from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "..");
-const scriptsDir = join(repoRoot, "scripts");
+const scriptsDir = resolve(import.meta.dirname);
 const generatedCa = join(repoRoot, "test-fixtures", "tls", "generated", "ca.crt");
 
 const smokeScripts = [
@@ -37,7 +37,7 @@ test("smoke scripts", async (t) => {
 });
 
 /**
- * Verify every smoke script in scripts/ is represented in this harness.
+ * Verify every smoke script in tests/ is represented in this harness.
  *
  * This keeps the hard-coded per-script timeout/env table from silently dropping
  * coverage when a new smoke check is added.
@@ -50,7 +50,7 @@ async function assertSmokeScriptInventory() {
   assert.deepEqual(
     actual,
     expected,
-    "tests/smoke.test.mjs must cover every scripts/smoke-*.mjs file",
+    "tests/smoke.test.mjs must cover every tests/smoke-*.mjs file",
   );
 }
 
@@ -58,7 +58,7 @@ async function assertSmokeScriptInventory() {
  * Execute one scripts/*.mjs file and fail with captured diagnostics on errors.
  *
  * @param {string} name Human-readable command name used in failure messages.
- * @param {string} script File name under scripts/ to execute.
+ * @param {string} script File name under tests/ to execute.
  * @param {{ env?: Record<string, string>, timeoutMs?: number }} options Child process options.
  */
 async function runScript(name, script, { env = {}, timeoutMs = 30_000 } = {}) {
