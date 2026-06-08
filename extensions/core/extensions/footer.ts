@@ -9,6 +9,7 @@ import type {
 import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import { formatPercent, formatTokens } from "../lib/format.ts";
+import { clearLinkedWorktreeCache, resolveLinkedWorktree } from "../lib/worktree.ts";
 import type { PermissionsController } from "./permissions/index.ts";
 import type { PermissionMode } from "./permissions/types.ts";
 import type { ProxyReadinessHandle } from "./proxy/index.ts";
@@ -16,7 +17,7 @@ import type { SubagentsController } from "./subagents/index.ts";
 import type { ClientTlsController } from "./tls/index.ts";
 
 /** Default footer template: a continuous powerline of live core-extension state. */
-const DEFAULT_TEMPLATE = "{permissions}{project}{subagents}{context}{model}{branch}";
+const DEFAULT_TEMPLATE = "{permissions}{project}{subagents}{context}{model}{worktree}{branch}";
 
 /** Context percent where the footer shifts from healthy to warning. */
 const CONTEXT_WARNING_PERCENT = 70;
@@ -38,6 +39,7 @@ const GLYPHS = {
   model: "", // microchip
   context: "󰘚", // gauge
   branch: "", // git branch
+  worktree: "", // linked worktree
   tls: "", // lock
   proxy: "", // globe
   status: "", // gear
@@ -58,7 +60,7 @@ const HELP = [
   "  /footer set <template>  set the footer template",
   "  /footer reset           restore the default template",
   "",
-  "template tokens: {permissions}, {project}, {subagents}, {context}, {model}, {branch}, {statuses}, {tls}, {proxy}",
+  "template tokens: {permissions}, {project}, {subagents}, {context}, {model}, {worktree}, {branch}, {statuses}, {tls}, {proxy}",
 ].join("\n");
 
 /** Runtime controllers the footer reads to summarize core extension state. */
@@ -163,7 +165,10 @@ function applyFooter(
 ): void {
   ctx.ui.setFooter((tui, theme, footerData) => {
     const requestRender = () => tui.requestRender();
-    const unsubscribeBranch = footerData.onBranchChange(requestRender);
+    const unsubscribeBranch = footerData.onBranchChange(() => {
+      clearLinkedWorktreeCache(ctx.cwd);
+      requestRender();
+    });
     footerRenderRequests.add(requestRender);
 
     return {
@@ -210,6 +215,7 @@ function buildSegments(
   const tlsStatus = controllers.tls.statusLabel();
   const proxyStatus = controllers.proxy.statusLabel();
   const subagentStatus = controllers.subagents.statusLabel();
+  const worktree = resolveLinkedWorktree(ctx.cwd);
 
   return {
     permissions: [permissionsSegment(controllers.permissions.getMode())],
@@ -235,11 +241,12 @@ function buildSegments(
         bg: ctx.model ? "toolSuccessBg" : "toolPendingBg",
       },
     ],
+    worktree: worktree ? [worktreeSegment(worktree.label)] : [],
     branch: [
       {
         glyph: GLYPHS.branch,
         label: "git",
-        value: footerData.getGitBranch() ?? "none",
+        value: worktree?.branch ?? footerData.getGitBranch() ?? "none",
         fg: "syntaxKeyword",
         bg: "userMessageBg",
       },
@@ -273,6 +280,17 @@ function permissionModeColors(mode: PermissionMode): Pick<Segment, "fg" | "bg"> 
     open: { fg: "error", bg: "toolErrorBg" },
   } satisfies Record<PermissionMode, Pick<Segment, "fg" | "bg">>;
   return colors[mode];
+}
+
+/** Build the linked-worktree identity segment shown only in linked worktrees. */
+function worktreeSegment(label: string): Segment {
+  return {
+    glyph: GLYPHS.worktree,
+    label: "wt",
+    value: label,
+    fg: "accent",
+    bg: "selectedBg",
+  };
 }
 
 /** Build the compact current subagent-activity segment shown in the footer. */
@@ -438,6 +456,7 @@ export const __footerForTest = {
   formatFooterContextUsage,
   permissionModeColors,
   subagentsSegment,
+  worktreeSegment,
   contextPressureColors,
   CONTEXT_WARNING_PERCENT,
   CONTEXT_CRITICAL_PERCENT,

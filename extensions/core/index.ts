@@ -12,6 +12,8 @@ import { registerCoreSettings } from "./extensions/settings.ts";
 import { registerSkills } from "./extensions/skills/index.ts";
 import { registerSubagents } from "./extensions/subagents/index.ts";
 import { registerTls } from "./extensions/tls/index.ts";
+import { registerWorktree } from "./extensions/worktree.ts";
+import { registerWorktreeContext } from "./extensions/worktree-context.ts";
 
 /**
  * Loads the core extension bundle without enabling any core capabilities yet.
@@ -28,6 +30,8 @@ export default function core(pi: ExtensionAPI) {
   // client cert when loaded, forwarding without it otherwise (never blocks traffic).
   const proxy = registerProxy(pi, { tlsProvider: tls });
   const subagents = registerSubagents(pi, { proxy });
+  registerWorktree(pi);
+  registerWorktreeContext(pi);
   const permissions = registerPermissions(pi);
   registerCoreSettings(pi, { permissions, tls });
   registerCoreFooter(pi, { permissions, tls, proxy, subagents });

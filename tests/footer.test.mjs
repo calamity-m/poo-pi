@@ -12,6 +12,7 @@ const {
   formatFooterContextUsage,
   permissionModeColors,
   subagentsSegment,
+  worktreeSegment,
   contextPressureColors,
   CONTEXT_WARNING_PERCENT,
   CONTEXT_CRITICAL_PERCENT,
@@ -63,6 +64,19 @@ test("renderFooter ignores unknown tokens by emitting them verbatim", () => {
   assert.equal(out, "{nope}");
 });
 
+test("renderFooter omits empty worktree token without changing adjacent branch output", () => {
+  const segments = {
+    model: [{ glyph: GLYPHS.model, label: "model", value: "x", fg: "success", bg: "green" }],
+    worktree: [],
+    branch: [{ glyph: GLYPHS.branch, label: "git", value: "main", fg: "success", bg: "green" }],
+  };
+
+  assert.equal(
+    renderFooter("{model}{worktree}{branch}", segments, theme),
+    renderFooter("{model}{branch}", segments, theme),
+  );
+});
+
 test("formatFooterContextUsage shows compact tokens and percent", () => {
   assert.equal(
     formatFooterContextUsage({ tokens: 50_000, contextWindow: 1_000_000, percent: 5 }, undefined),
@@ -79,6 +93,16 @@ test("permissionModeColors maps every mode to explicit severity colors", () => {
   assert.deepEqual(permissionModeColors("trusted"), { fg: "accent", bg: "selectedBg" });
   assert.deepEqual(permissionModeColors("permissive"), { fg: "warning", bg: "toolPendingBg" });
   assert.deepEqual(permissionModeColors("open"), { fg: "error", bg: "toolErrorBg" });
+});
+
+test("worktreeSegment renders the compact linked-worktree label", () => {
+  assert.deepEqual(worktreeSegment("feature"), {
+    glyph: GLYPHS.worktree,
+    label: "wt",
+    value: "feature",
+    fg: "accent",
+    bg: "selectedBg",
+  });
 });
 
 test("subagentsSegment is quiet when idle and visible when active", () => {

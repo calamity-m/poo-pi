@@ -105,6 +105,12 @@ Estimated usage by category · quality good
 
 If Pi has no canonical usage yet, or tokens are unknown immediately after compaction, `/context` labels the usage as unknown instead of displaying a misleading `0%`.
 
+## Worktrees
+
+When Pi starts inside a linked Git worktree, the core footer adds a `wt:<label>` segment before the branch segment and each agent run receives a short system-prompt note with the worktree label, branch, root, and current Pi cwd. Ordinary repositories and non-Git directories keep the existing footer and prompt behavior. Custom `/footer` templates must include `{worktree}` to display the linked-worktree label.
+
+Run `/worktree` to list linked worktrees for the current repository; it is list-only and does not move the session cwd.
+
 ## History search
 
 Press `F8` or run `/history [query]` to search prior user messages. The live picker shows the top 10 matches as you type, covering the current session plus saved Pi sessions across projects. Picking a result only populates the editor with that message text; it does not switch sessions, fork, or send anything.
