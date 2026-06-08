@@ -13,7 +13,7 @@ import type {
 import type { SourceTarget } from "../extensions/tls/types.ts";
 import { createDefaultCoreSettings } from "./defaults.ts";
 import { coreSettingsPath, cwdFromProxyAuditDir } from "./paths.ts";
-import type { CoreSettings, CoreSubagentSettings } from "./types.ts";
+import type { CoreHistorySearchSettings, CoreSettings, CoreSubagentSettings } from "./types.ts";
 
 /** Read unified core settings from `.pi/core-settings.json`, returning defaults when absent or malformed. */
 export async function readCoreSettings(cwd: string): Promise<CoreSettings> {
@@ -99,6 +99,35 @@ export async function writeCoreProxyRedactionMode(
   await writeCoreSettings(cwd, settings);
 }
 
+/** Read history search settings from unified core settings. */
+export async function readCoreHistorySearchSettings(
+  cwd: string,
+): Promise<CoreHistorySearchSettings | undefined> {
+  return (await readCoreSettings(cwd)).historySearch;
+}
+
+/** Read history search settings synchronously for registration-time shortcut setup. */
+export function readCoreHistorySearchSettingsSync(
+  cwd: string,
+): CoreHistorySearchSettings | undefined {
+  try {
+    return parseCoreSettings(JSON.parse(readFileSync(coreSettingsPath(cwd), "utf8")))
+      ?.historySearch;
+  } catch {
+    return undefined;
+  }
+}
+
+/** Persist history search settings without disturbing other core settings sections. */
+export async function writeCoreHistorySearchSettings(
+  cwd: string,
+  historySearch: CoreHistorySearchSettings,
+): Promise<void> {
+  const settings = await readCoreSettings(cwd);
+  settings.historySearch = historySearch;
+  await writeCoreSettings(cwd, settings);
+}
+
 /** Read subagent tier settings from unified core settings. */
 export async function readCoreSubagentSettings(
   cwd: string,
@@ -127,6 +156,8 @@ export function validateCoreSettings(value: unknown): CoreSettings | string {
   if (proxyError) return proxyError;
   const subagentsError = validateSubagentSection(value["subagents"]);
   if (subagentsError) return subagentsError;
+  const historySearchError = validateHistorySearchSection(value["historySearch"]);
+  if (historySearchError) return historySearchError;
   return parseCoreSettings(value) ?? createDefaultCoreSettings();
 }
 
@@ -147,6 +178,9 @@ export function parseCoreSettings(value: unknown): CoreSettings | undefined {
 
   const subagents = parseSubagentSettings(raw["subagents"]);
   if (subagents) out.subagents = subagents;
+
+  const historySearch = parseHistorySearchSettings(raw["historySearch"]);
+  if (historySearch) out.historySearch = historySearch;
 
   return out;
 }
@@ -198,6 +232,17 @@ function validateProxySection(value: unknown): string | undefined {
   return undefined;
 }
 
+/** Validate the history search section when present in edited core settings. */
+function validateHistorySearchSection(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return '"historySearch" must be an object';
+  const shortcut = value["shortcut"];
+  if (shortcut !== undefined && !isKeyboardShortcut(shortcut)) {
+    return '"historySearch.shortcut" must be a non-empty shortcut string';
+  }
+  return undefined;
+}
+
 /** Validate the subagents section when present in edited core settings. */
 export function validateSubagentSection(value: unknown): string | undefined {
   if (value === undefined) return undefined;
@@ -215,6 +260,14 @@ export function validateSubagentSection(value: unknown): string | undefined {
     }
   }
   return undefined;
+}
+
+/** Parse history search settings, dropping invalid fields. */
+function parseHistorySearchSettings(value: unknown): CoreHistorySearchSettings | undefined {
+  if (!isRecord(value)) return undefined;
+  const shortcut = value["shortcut"];
+  if (!isKeyboardShortcut(shortcut)) return undefined;
+  return { shortcut: shortcut.trim() };
 }
 
 /** Parse the permissions section without compiling regexes. */
@@ -315,6 +368,11 @@ function parseSubagentSettings(value: unknown): CoreSubagentSettings | undefined
 /** Return whether a value is a canonical provider/model-id string. */
 function isCanonicalModelId(value: unknown): value is string {
   return typeof value === "string" && /^[^/\s]+\/\S+$/.test(value);
+}
+
+/** Return whether a shortcut string is non-empty; Pi validates exact key syntax at registration. */
+function isKeyboardShortcut(value: unknown): value is string {
+  return typeof value === "string" && value.trim().length > 0;
 }
 
 /** Return whether a value is a supported Pi thinking level. */

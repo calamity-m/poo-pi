@@ -24,6 +24,15 @@ test("parseCoreSettings retains valid subagent mappings", () => {
   );
 });
 
+test("parseCoreSettings retains history search shortcut", () => {
+  assert.deepEqual(
+    parseCoreSettings({ version: 1, historySearch: { shortcut: "ctrl+r" } })?.historySearch,
+    {
+      shortcut: "ctrl+r",
+    },
+  );
+});
+
 test("validateSubagentSection rejects unsupported tier names", () => {
   assert.match(validateSubagentSection({ default: { model: "p/m" } }), /not supported/);
 });
@@ -36,6 +45,13 @@ test("validateSubagentSection rejects invalid thinking levels", () => {
   assert.match(
     validateSubagentSection({ fast: { model: "p/m", thinkingLevel: "max" } }),
     /thinking/,
+  );
+});
+
+test("validateCoreSettings rejects invalid history search shortcut", () => {
+  assert.match(
+    validateCoreSettings({ version: 1, historySearch: { shortcut: "" } }),
+    /historySearch/,
   );
 });
 

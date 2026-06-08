@@ -1,16 +1,26 @@
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import { Container, type SettingItem, SettingsList, Text } from "@earendil-works/pi-tui";
+import {
+  Container,
+  type SettingItem,
+  SettingsList,
+  Text,
+  parseKey,
+  truncateToWidth,
+  visibleWidth,
+} from "@earendil-works/pi-tui";
 
 import { coreSettingsPath } from "../config/paths.ts";
 import {
   readCoreClientTlsSkip,
+  readCoreHistorySearchSettings,
   readCoreProxyRedactionMode,
   readCoreSettings,
   readCoreSubagentSettings,
   validateCoreSettings,
   writeCoreClientTlsSkip,
+  writeCoreHistorySearchSettings,
   writeCoreSettings,
   writeCoreSubagentSettings,
 } from "../config/persistence.ts";
@@ -31,6 +41,9 @@ export interface CoreSettingsControllers {
 
 /** Permission modes offered as a cycling row in the settings UI. */
 const MODES: PermissionMode[] = ["safe", "trusted", "permissive", "open"];
+
+/** Default shortcut used when no history search setting is persisted. */
+const DEFAULT_HISTORY_SEARCH_SHORTCUT = "f8";
 
 /** Thinking levels that can be persisted for a configured subagent tier. */
 const SUBAGENT_THINKING_LEVELS = [
@@ -144,6 +157,7 @@ async function openCoreSettingsSelector(
     const redaction = await readCoreProxyRedactionMode(auditPaths(ctx.cwd).dir);
     const tlsSkipped = await readCoreClientTlsSkip(ctx.cwd);
     const subagents = await readCoreSubagentSettings(ctx.cwd);
+    const historySearch = await readCoreHistorySearchSettings(ctx.cwd);
 
     const result = await ctx.ui.custom<SelectorResult>((_tui, theme, _kb, done) => {
       const items: SettingItem[] = [
@@ -183,6 +197,13 @@ async function openCoreSettingsSelector(
           currentValue: tlsSkipped ? "on" : "off",
           values: ["on", "off"],
         },
+        actionItem(
+          "history-search-shortcut",
+          "History search shortcut",
+          historySearch?.shortcut ?? DEFAULT_HISTORY_SEARCH_SHORTCUT,
+          "Configure the user-message history search shortcut. Applies after /reload.",
+          done,
+        ),
         actionItem(
           "subagents-fast",
           "Subagent fast model",
@@ -303,6 +324,10 @@ async function runAction(
     await controllers.tls.configure(ctx);
     return;
   }
+  if (id === "history-search-shortcut") {
+    await configureHistorySearchShortcut(ctx);
+    return;
+  }
   if (id === "subagents-fast" || id === "subagents-high") {
     await configureSubagentTier(ctx, id === "subagents-fast" ? "fast" : "high");
     return;
@@ -310,6 +335,156 @@ async function runAction(
   if (id === "json-edit") {
     await editSettings(ctx);
   }
+}
+
+/** Prompt for the history search shortcut and persist it through the unified settings file. */
+async function configureHistorySearchShortcut(ctx: ExtensionCommandContext): Promise<void> {
+  const current = await readCoreHistorySearchSettings(ctx.cwd);
+  const prefill = current?.shortcut ?? DEFAULT_HISTORY_SEARCH_SHORTCUT;
+  const captured = await ctx.ui.custom<CapturedShortcut | undefined>(
+    (tui, theme, keybindings, done) =>
+      new ShortcutCapture(theme, keybindings, prefill, done, () => tui.requestRender()),
+  );
+  const shortcut = captured?.shortcut;
+  if (!shortcut) return;
+
+  if (captured.conflicts.length > 0) {
+    const ok = await ctx.ui.confirm(
+      "Shortcut conflict",
+      `${shortcut} is already bound to ${captured.conflicts.join(", ")}. Save anyway?`,
+    );
+    if (!ok) return;
+  }
+
+  const validated = validateCoreSettings({ version: 1, historySearch: { shortcut } });
+  if (typeof validated === "string") {
+    ctx.ui.notify(`[core-settings] history search shortcut rejected — ${validated}`, "error");
+    return;
+  }
+
+  await writeCoreHistorySearchSettings(ctx.cwd, { shortcut });
+  ctx.ui.notify(
+    `[core-settings] history search shortcut set to ${shortcut}; run /reload to apply`,
+    "info",
+  );
+}
+
+/** Shortcut captured from raw terminal input plus any effective keybinding conflicts. */
+interface CapturedShortcut {
+  /** Pi shortcut string parsed from the raw keypress. */
+  shortcut: string;
+  /** Existing keybinding ids that already use the shortcut. */
+  conflicts: string[];
+}
+
+/** Theme surface needed by the shortcut capture UI. */
+interface ShortcutCaptureTheme {
+  /** Colorize text with a named theme color. */
+  fg(color: string, text: string): string;
+  /** Bold text. */
+  bold(text: string): string;
+}
+
+/** Keybinding manager surface needed by the shortcut capture UI. */
+interface ShortcutCaptureKeybindings {
+  /** Return whether a raw keypress matches a named keybinding. */
+  matches(data: string, id: string): boolean;
+  /** Effective keybinding config, available on Pi's injected manager. */
+  getEffectiveConfig?: () => Record<string, string | string[] | undefined>;
+}
+
+/** Minimal custom UI that captures one raw keypress and returns its Pi shortcut id. */
+class ShortcutCapture {
+  focused = false;
+  private message: string | undefined;
+  private readonly theme: ShortcutCaptureTheme;
+  private readonly keybindings: ShortcutCaptureKeybindings;
+  private readonly currentShortcut: string;
+  private readonly done: (result: CapturedShortcut | undefined) => void;
+  private readonly requestRender: () => void;
+
+  /** Build the key capture prompt. */
+  constructor(
+    theme: ShortcutCaptureTheme,
+    keybindings: ShortcutCaptureKeybindings,
+    currentShortcut: string,
+    done: (result: CapturedShortcut | undefined) => void,
+    requestRender: () => void,
+  ) {
+    this.theme = theme;
+    this.keybindings = keybindings;
+    this.currentShortcut = currentShortcut;
+    this.done = done;
+    this.requestRender = requestRender;
+  }
+
+  /** Render a compact bordered key-capture prompt. */
+  render(width: number): string[] {
+    if (width < 4) return [truncateToWidth("shortcut", width, "")];
+    const innerWidth = width - 2;
+    const lines = [
+      this.theme.fg("accent", this.theme.bold("History search shortcut")),
+      `Current: ${this.currentShortcut}`,
+      "Press the key combination to assign.",
+      this.theme.fg("dim", "Esc/Ctrl+C cancels. /reload is required after save."),
+    ];
+    if (this.message) lines.push(this.message);
+    return [
+      this.borderLine("shortcut", width),
+      ...lines.map((line) => this.frameLine(line, innerWidth)),
+      this.theme.fg("border", `└${"─".repeat(innerWidth)}┘`),
+    ];
+  }
+
+  /** Capture the next keypress, or cancel on the configured select-cancel binding. */
+  handleInput(data: string): void {
+    if (this.keybindings.matches(data, "tui.select.cancel")) {
+      this.done(undefined);
+      return;
+    }
+
+    const shortcut = parseKey(data);
+    if (!shortcut) {
+      this.message = this.theme.fg("warning", "Could not parse that key; try another.");
+      this.requestRender();
+      return;
+    }
+
+    this.done({ shortcut, conflicts: findShortcutConflicts(shortcut, this.keybindings) });
+  }
+
+  /** No cached state to invalidate. */
+  invalidate(): void {}
+
+  /** Render the top border with a title embedded. */
+  private borderLine(title: string, width: number): string {
+    const innerWidth = width - 2;
+    const label = ` ${truncateToWidth(title, Math.max(0, innerWidth - 2), "")} `;
+    const rule = "─".repeat(Math.max(0, innerWidth - label.length));
+    return this.theme.fg("border", `┌${label}${rule}┐`);
+  }
+
+  /** Render a padded content row between vertical borders. */
+  private frameLine(text: string, innerWidth: number): string {
+    const clipped = truncateToWidth(text, innerWidth, "");
+    const pad = " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
+    return `${this.theme.fg("border", "│")}${clipped}${pad}${this.theme.fg("border", "│")}`;
+  }
+}
+
+/** Return keybinding ids whose effective key list already includes the shortcut. */
+function findShortcutConflicts(
+  shortcut: string,
+  keybindings: ShortcutCaptureKeybindings,
+): string[] {
+  const effective = keybindings.getEffectiveConfig?.() ?? {};
+  const normalized = shortcut.toLowerCase();
+  const conflicts: string[] = [];
+  for (const [id, value] of Object.entries(effective)) {
+    const keys = Array.isArray(value) ? value : value ? [value] : [];
+    if (keys.some((key) => key.toLowerCase() === normalized)) conflicts.push(id);
+  }
+  return conflicts;
 }
 
 /** Prompt for one subagent tier mapping and persist it through the unified settings file. */

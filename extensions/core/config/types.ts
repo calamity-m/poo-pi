@@ -40,6 +40,12 @@ export interface CoreSubagentSettings {
   high?: SubagentModelMapping;
 }
 
+/** History search settings persisted by core. */
+export interface CoreHistorySearchSettings {
+  /** Keyboard shortcut registered by the history-search extension. */
+  shortcut?: string;
+}
+
 /** Unified project-local settings for the poo-pi core extension bundle. */
 export interface CoreSettings {
   /** Settings schema version. */
@@ -52,4 +58,6 @@ export interface CoreSettings {
   proxy?: CoreProxySettings;
   /** Isolated subagent model tier settings. */
   subagents?: CoreSubagentSettings;
+  /** User-message history search settings. */
+  historySearch?: CoreHistorySearchSettings;
 }

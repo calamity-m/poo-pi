@@ -3,6 +3,7 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 import { registerClear } from "./extensions/clear.ts";
 import { registerContext } from "./extensions/context.ts";
 import { registerCoreFooter } from "./extensions/footer.ts";
+import { registerHistorySearch } from "./extensions/history-search.ts";
 import { registerModels } from "./extensions/models.ts";
 import { registerPermissions } from "./extensions/permissions/index.ts";
 import { registerPrompt } from "./extensions/prompt.ts";
@@ -19,6 +20,7 @@ export default function core(pi: ExtensionAPI) {
   const tls = registerTls(pi);
   registerClear(pi);
   registerContext(pi);
+  registerHistorySearch(pi);
   registerModels(pi);
   registerPrompt(pi);
   registerSkills(pi);
