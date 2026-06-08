@@ -152,8 +152,8 @@ test("formatter uses Claude-style context grid and resource sections", () => {
   assert.match(output, /π|Π|·/);
   assert.match(output, /──/);
   assert.doesNotMatch(output, /⛁|⛀|⛶/);
-  assert.doesNotMatch(output, /\x1b\[/);
-  assert.match(coloredOutput, /\x1b\[/);
+  assert.ok(!output.includes("\x1b["));
+  assert.ok(coloredOutput.includes("\x1b["));
   assert.match(output, /Estimated usage by category/);
   assert.match(output, /Tools · loaded in system prompt/);
   assert.match(output, /Memory files · \/memory/);
@@ -196,7 +196,7 @@ test("skills render grouped by source with priority ordering and accented header
   );
   assert.ok(plain.indexOf("User") < plain.indexOf("Project"));
   assert.ok(plain.indexOf("Project") < plain.indexOf("Plugin (skill-creator)"));
-  assert.match(colored, /\x1b\[32mUser\x1b\[0m/);
+  assert.ok(colored.includes("\x1b[32mUser\x1b[0m"));
 });
 
 test("missing system prompt options notes that resource breakdowns are deferred", () => {
