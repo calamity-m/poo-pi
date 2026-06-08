@@ -106,6 +106,28 @@ prompts/      -> Top-level Markdown prompt templates exposed as slash commands.
 themes/       -> Pi theme JSON files included in the package manifest.
 ```
 
+### Core extensions
+
+Each lives under `extensions/core/extensions/` (single `.ts` file, or a directory with its own `index.ts`) and is wired up by `extensions/core/index.ts`.
+
+```text
+clear.ts          -> `/clear` alias for Pi's `/new` session command.
+context.ts        -> `/context` panel showing model-window usage by category.
+footer.ts         -> Powerline footer rendering live core-extension state.
+header.ts         -> Custom session header shown on cold launch and `/new`.
+help.ts           -> `/help` scrollable command list with view-mode cycling.
+history-search.ts -> `/history` (F8) search over prior user messages.
+interview/        -> `interview_user` tool: structured multi-question TUI.
+permissions/      -> Tool-call policy engine and `/permissions` modes.
+prompt.ts         -> `/prompt` template picker with variable filling.
+proxy/            -> Auditing HTTP/TLS proxy and its command surface.
+settings.ts       -> `/core-settings` UI over `.pi/core-settings.json`.
+skills/           -> Skill discovery, stats, and picker panel.
+subagents/        -> `spawn_subagent` tool and bundled preset agents.
+tls/              -> Client TLS setup (`/tls-setup`) and persistence.
+worktree/         -> `/worktree` listing and linked-worktree footer/context.
+```
+
 ### Entry points
 
 ```text
