@@ -3,6 +3,7 @@ import type { ExtensionContext } from "@earendil-works/pi-coding-agent";
 import { Container, type SelectItem, SelectList, Text } from "@earendil-works/pi-tui";
 
 import { showInlinePanel, TextPanel } from "../../lib/ui/panel.ts";
+import { requestCoreFooterRender } from "../footer.ts";
 import { formatElapsed, formatRunSource, hasActiveRuns, statusIcon, truncate } from "./run.ts";
 import { buildTranscriptLines } from "./transcript.ts";
 import type { SubagentRun } from "./types.ts";
@@ -26,11 +27,13 @@ export function updateSubagentsUi(
       `${active.length} subagent${active.length === 1 ? "" : "s"} running`,
     );
     ctx.ui.setWidget("subagents", buildSubagentWidget(runs), { placement: "aboveEditor" });
+    requestCoreFooterRender();
     return;
   }
 
   ctx.ui.setStatus("subagents", undefined);
   ctx.ui.setWidget("subagents", buildSubagentWidget(runs), { placement: "aboveEditor" });
+  requestCoreFooterRender();
   setClearWidgetTimer(
     setTimeout(() => {
       ctx.ui.setWidget("subagents", undefined);
@@ -58,6 +61,7 @@ export function clearSubagentsUi(
   setClearWidgetTimer(undefined);
   ctx.ui.setStatus("subagents", undefined);
   ctx.ui.setWidget("subagents", undefined);
+  requestCoreFooterRender();
 }
 
 /** Build short widget lines for recent subagent runs. */

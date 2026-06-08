@@ -10,12 +10,22 @@ import { truncateToWidth, visibleWidth } from "@earendil-works/pi-tui";
 
 import { formatPercent, formatTokens } from "../lib/format.ts";
 import type { PermissionsController } from "./permissions/index.ts";
+import type { PermissionMode } from "./permissions/types.ts";
 import type { ProxyReadinessHandle } from "./proxy/index.ts";
 import type { SubagentsController } from "./subagents/index.ts";
 import type { ClientTlsController } from "./tls/index.ts";
 
 /** Default footer template: a continuous powerline of live core-extension state. */
 const DEFAULT_TEMPLATE = "{permissions}{project}{subagents}{context}{model}{branch}";
+
+/** Context percent where the footer shifts from healthy to warning. */
+const CONTEXT_WARNING_PERCENT = 70;
+
+/** Context percent where the footer shifts from warning to critical. */
+const CONTEXT_CRITICAL_PERCENT = 90;
+
+/** Active custom footer render callbacks for state changes outside footerData. */
+const footerRenderRequests = new Set<() => void>();
 
 /**
  * Nerd-font glyphs labelling each segment, echoing the gruvbox-rainbow preset's
@@ -152,10 +162,15 @@ function applyFooter(
   controllers: CoreFooterControllers,
 ): void {
   ctx.ui.setFooter((tui, theme, footerData) => {
-    const unsubscribeBranch = footerData.onBranchChange(() => tui.requestRender());
+    const requestRender = () => tui.requestRender();
+    const unsubscribeBranch = footerData.onBranchChange(requestRender);
+    footerRenderRequests.add(requestRender);
 
     return {
-      dispose: unsubscribeBranch,
+      dispose: () => {
+        unsubscribeBranch();
+        footerRenderRequests.delete(requestRender);
+      },
       invalidate() {},
       render(width: number): string[] {
         const rendered = renderFooter(
@@ -197,15 +212,7 @@ function buildSegments(
   const subagentStatus = controllers.subagents.statusLabel();
 
   return {
-    permissions: [
-      {
-        glyph: GLYPHS.permissions,
-        label: "perm",
-        value: controllers.permissions.getMode(),
-        fg: "accent",
-        bg: "selectedBg",
-      },
-    ],
+    permissions: [permissionsSegment(controllers.permissions.getMode())],
     tls: [statusSegment(GLYPHS.tls, "tls", tlsStatus)],
     proxy: [statusSegment(GLYPHS.proxy, "proxy", proxyStatus.replace(/^proxy:/, ""))],
     project: [
@@ -217,15 +224,7 @@ function buildSegments(
         bg: "customMessageBg",
       },
     ],
-    subagents: [
-      {
-        glyph: GLYPHS.subagents,
-        label: "subagents",
-        value: subagentStatus?.replace(/^subagents:/, "") ?? "idle",
-        fg: subagentStatus ? "mdLink" : "muted",
-        bg: subagentStatus ? "toolPendingBg" : "customMessageBg",
-      },
-    ],
+    subagents: [subagentsSegment(subagentStatus)],
     context: [contextSegment(ctx.getContextUsage(), ctx.model?.contextWindow)],
     model: [
       {
@@ -254,15 +253,49 @@ function projectLabel(cwd: string): string {
   return basename(cwd) || cwd;
 }
 
+/** Request a custom footer repaint after external controller state changes. */
+export function requestCoreFooterRender(): void {
+  for (const requestRender of footerRenderRequests) requestRender();
+}
+
+/** Build the compact current permissions-mode segment shown in the footer. */
+function permissionsSegment(mode: PermissionMode): Segment {
+  const colors = permissionModeColors(mode);
+  return { glyph: GLYPHS.permissions, label: "perm", value: mode, ...colors };
+}
+
+/** Map each permission mode to risk-signaling footer color tokens. */
+function permissionModeColors(mode: PermissionMode): Pick<Segment, "fg" | "bg"> {
+  const colors = {
+    safe: { fg: "success", bg: "toolSuccessBg" },
+    trusted: { fg: "accent", bg: "selectedBg" },
+    permissive: { fg: "warning", bg: "toolPendingBg" },
+    open: { fg: "error", bg: "toolErrorBg" },
+  } satisfies Record<PermissionMode, Pick<Segment, "fg" | "bg">>;
+  return colors[mode];
+}
+
+/** Build the compact current subagent-activity segment shown in the footer. */
+function subagentsSegment(statusLabel: string | undefined): Segment {
+  const active = statusLabel !== undefined;
+  return {
+    glyph: GLYPHS.subagents,
+    label: "subagents",
+    value: statusLabel?.replace(/^subagents:/, "") ?? "idle",
+    fg: active ? "mdLink" : "muted",
+    bg: active ? "toolPendingBg" : "customMessageBg",
+  };
+}
+
 /** Build the compact current context-usage segment shown in the footer. */
 function contextSegment(usage: ContextUsage | undefined, modelWindow: number | undefined): Segment {
   const percent = usage?.percent ?? null;
+  const colors = contextPressureColors(percent);
   return {
     glyph: GLYPHS.context,
     label: "ctx",
     value: formatFooterContextUsage(usage, modelWindow),
-    fg: contextColor(percent),
-    bg: contextBackground(percent),
+    ...colors,
   };
 }
 
@@ -277,20 +310,12 @@ function formatFooterContextUsage(
   return `${formatTokens(tokens)}/${formatTokens(contextWindow)} ${formatPercent(percent)}`;
 }
 
-/** Pick a context-usage foreground color by pressure level. */
-function contextColor(percent: number | null): string {
-  if (percent === null) return "warning";
-  if (percent >= 90) return "error";
-  if (percent >= 70) return "warning";
-  return "success";
-}
-
-/** Pick a context-usage background color by pressure level. */
-function contextBackground(percent: number | null): string {
-  if (percent === null) return "toolPendingBg";
-  if (percent >= 90) return "toolErrorBg";
-  if (percent >= 70) return "toolPendingBg";
-  return "toolSuccessBg";
+/** Pick context-usage color tokens by pressure level. */
+function contextPressureColors(percent: number | null): Pick<Segment, "fg" | "bg"> {
+  if (percent === null) return { fg: "warning", bg: "toolPendingBg" };
+  if (percent >= CONTEXT_CRITICAL_PERCENT) return { fg: "error", bg: "toolErrorBg" };
+  if (percent >= CONTEXT_WARNING_PERCENT) return { fg: "warning", bg: "toolPendingBg" };
+  return { fg: "success", bg: "toolSuccessBg" };
 }
 
 /** Minimal theme surface used by this footer renderer. */
@@ -411,4 +436,9 @@ export const __footerForTest = {
   GLYPHS,
   POWERLINE,
   formatFooterContextUsage,
+  permissionModeColors,
+  subagentsSegment,
+  contextPressureColors,
+  CONTEXT_WARNING_PERCENT,
+  CONTEXT_CRITICAL_PERCENT,
 } satisfies Record<string, unknown>;

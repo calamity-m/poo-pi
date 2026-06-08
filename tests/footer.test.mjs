@@ -3,8 +3,19 @@ import test from "node:test";
 
 import { __footerForTest } from "../extensions/core/extensions/footer.ts";
 
-const { renderFooter, renderPowerline, bgToFg, GLYPHS, POWERLINE, formatFooterContextUsage } =
-  __footerForTest;
+const {
+  renderFooter,
+  renderPowerline,
+  bgToFg,
+  GLYPHS,
+  POWERLINE,
+  formatFooterContextUsage,
+  permissionModeColors,
+  subagentsSegment,
+  contextPressureColors,
+  CONTEXT_WARNING_PERCENT,
+  CONTEXT_CRITICAL_PERCENT,
+} = __footerForTest;
 
 /** Minimal truecolor theme stub mirroring the real Theme surface. */
 const theme = {
@@ -61,4 +72,44 @@ test("formatFooterContextUsage shows compact tokens and percent", () => {
 
 test("formatFooterContextUsage falls back to the model window when usage is unavailable", () => {
   assert.equal(formatFooterContextUsage(undefined, 128_000), "?/128k ?");
+});
+
+test("permissionModeColors maps every mode to explicit severity colors", () => {
+  assert.deepEqual(permissionModeColors("safe"), { fg: "success", bg: "toolSuccessBg" });
+  assert.deepEqual(permissionModeColors("trusted"), { fg: "accent", bg: "selectedBg" });
+  assert.deepEqual(permissionModeColors("permissive"), { fg: "warning", bg: "toolPendingBg" });
+  assert.deepEqual(permissionModeColors("open"), { fg: "error", bg: "toolErrorBg" });
+});
+
+test("subagentsSegment is quiet when idle and visible when active", () => {
+  assert.deepEqual(subagentsSegment(undefined), {
+    glyph: GLYPHS.subagents,
+    label: "subagents",
+    value: "idle",
+    fg: "muted",
+    bg: "customMessageBg",
+  });
+  assert.deepEqual(subagentsSegment("subagents:writing tests"), {
+    glyph: GLYPHS.subagents,
+    label: "subagents",
+    value: "writing tests",
+    fg: "mdLink",
+    bg: "toolPendingBg",
+  });
+});
+
+test("contextPressureColors covers unknown, healthy, warning, and critical pressure", () => {
+  assert.deepEqual(contextPressureColors(null), { fg: "warning", bg: "toolPendingBg" });
+  assert.deepEqual(contextPressureColors(CONTEXT_WARNING_PERCENT - 1), {
+    fg: "success",
+    bg: "toolSuccessBg",
+  });
+  assert.deepEqual(contextPressureColors(CONTEXT_WARNING_PERCENT), {
+    fg: "warning",
+    bg: "toolPendingBg",
+  });
+  assert.deepEqual(contextPressureColors(CONTEXT_CRITICAL_PERCENT), {
+    fg: "error",
+    bg: "toolErrorBg",
+  });
 });
