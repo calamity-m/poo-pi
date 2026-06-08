@@ -15,6 +15,7 @@
     "skills/",
     "prompts/",
     "themes/",
+    "docs/",
     "test-fixtures/tls/README.md",
     "README.md",
     "LICENSE"

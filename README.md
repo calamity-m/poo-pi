@@ -9,22 +9,16 @@ Installable Pi package scaffold for bundling project-level resources:
 
 ## Install
 
-From this repository:
+Install from GitHub:
 
 ```bash
-pi install /absolute/path/to/poo-pi
+pi install git:github.com/calamity-m/poo-pi
 ```
 
-For a project-local install:
+Fetch updates later with:
 
 ```bash
-pi install /absolute/path/to/poo-pi -l
-```
-
-For development without installing:
-
-```bash
-pi -e ./extensions/core/index.ts --theme ./themes/poo-dark.json
+pi update
 ```
 
 ## Package manifest
@@ -59,121 +53,15 @@ themes/
   poo-light.json
 ```
 
-## Core settings
+## Extension docs
 
-Core extension settings are stored project-locally in `.pi/core-settings.json`.
-
-In an interactive session, run `/core-settings` (no arguments) to open a settings list:
-
-- **Permissions mode** — cycle `safe` / `trusted` / `permissive` / `open`; applied live and persisted. (Interactive only — headless sessions run `open` regardless.)
-- **Permissions config** — open the validated JSON editor for permission rules and remembered grants.
-- **Proxy audit redaction** — toggle `on` / `off`; persisted and applied to future proxy requests.
-- **Client TLS** — launch the secret-safe `/tls-setup` flow. The row shows only a redacted status (`loaded` / `unconfigured` / `error`, or `skipped`); passphrases, certificate bytes, and full target paths are never displayed or persisted.
-- **Skip client TLS** — toggle `on` / `off`. When `on` (persisted as `tls.skip` in `.pi/core-settings.json`), client TLS resolution is skipped at startup: no setup prompt and no client certificate is attached. Any previously configured target metadata is kept on disk, so turning skip off restores it without re-setup. Applies on the next startup.
-- **History search shortcut** — configure the `/history` shortcut, persisted as `historySearch.shortcut`. Applies after `/reload`.
-- **Core settings JSON** — open the raw `.pi/core-settings.json` editor for advanced changes.
-
-The scripted subcommands remain available: `/core-settings show` always prints the effective JSON (never the selector), `/core-settings edit` opens the unified JSON editor, and `/core-settings path` prints the file path. In a headless session, bare `/core-settings` falls back to showing the effective JSON.
-
-The unified file currently contains permissions, non-secret TLS target metadata, and proxy audit redaction settings. TLS passphrases, certificate bytes, and private-key material are never persisted. Structured settings — permission rules, remembered grants, and the TLS target — are edited through their dedicated flows or the raw JSON editor, not as inline rows.
-
-## Context usage
-
-Run `/context` to show the active model window usage without adding anything to message history or triggering an agent turn. In the TUI it opens as a dismissible inline panel in the prompt area with colored category glyphs; in headless modes it prints the same report without ANSI color.
-
-The headline usage and percentage come from Pi's canonical context usage. The category makeup (`System prompt`, `Messages`, `Tool results`, `Summaries`, and `Unknown/overhead`) is an estimate built from the active branch and cached system-prompt data, so use it as a guide for what to trim rather than exact accounting.
-
-```text
-anthropic/claude-sonnet-4-5
-claude-sonnet-4-5
-128k/200k tokens (64%) · OK
-───────────────────────────────────────
-π π π π π π π π π π π π π π Π Π Π Π Π Π
-Π Π Π Π Π Π Π Π Π Π Π Π Π Π Π Π Π Π Π Π
-Π Π Π Π Π Π Π Π ϖ ϖ ϖ ϖ ϖ ϖ ϖ ϖ ϖ ϖ ∏ ∏
-∏ ∏ ? ? ? ? ? ? · · · · · · · · · · · ·
-· · · · · · · · · · · · · · · · · · · ·
-───────────────────────────────────────
-Estimated usage by category · quality good
-  π System prompt: 31k tokens (24%)
-  Π Messages: 58k tokens (45%)
-  ϖ Tool results: 26k tokens (21%)
-  ∏ Summaries: 5.7k tokens (4%)
-  ? Unknown/overhead: 7.3k tokens (6%)
-  · Free space: 72k (36%)
-```
-
-If Pi has no canonical usage yet, or tokens are unknown immediately after compaction, `/context` labels the usage as unknown instead of displaying a misleading `0%`.
-
-## Worktrees
-
-When Pi starts inside a linked Git worktree, the core footer adds a `wt:<label>` segment before the branch segment and each agent run receives a short system-prompt note with the worktree label, branch, root, and current Pi cwd. Ordinary repositories and non-Git directories keep the existing footer and prompt behavior. Custom `/footer` templates must include `{worktree}` to display the linked-worktree label.
-
-Run `/worktree` to list linked worktrees for the current repository; it is list-only and does not move the session cwd.
-
-## History search
-
-Press `F8` or run `/history [query]` to search prior user messages. The live picker shows the top 10 matches as you type, covering the current session plus saved Pi sessions across projects. Picking a result only populates the editor with that message text; it does not switch sessions, fork, or send anything.
-
-To choose a different shortcut, set `{ "historySearch": { "shortcut": "ctrl+r" } }` in `.pi/core-settings.json`, then run `/reload`. For `Ctrl+R`, also rebind or disable Pi's built-in session rename shortcut in `~/.pi/agent/keybindings.json`, for example `{ "app.session.rename": ["f9"] }` or `{ "app.session.rename": [] }`.
-
-## Prompt filler
-
-Run `/prompt` to pick a discovered prompt template, fill supported variables, and place the expanded prompt in the editor for review. You can also start from a specific template with `/prompt <template> [args...]`; direct invocation still opens the fill UI so substitutions can be reviewed before sending.
-
-Supported placeholders are `$ARGUMENTS`, `$@`, `$1`, `$2`, ..., `${@:N}`, and `${@:N:L}`. Arguments use simple shell-like splitting with quotes and backslash escapes. Prompt frontmatter support is intentionally limited to simple one-line `key: value` strings such as `description` and `argument-hint`; malformed or unreadable templates are reported as warnings and skipped.
-
-## Preset subagents
-
-The core subagents extension can bundle named preset agents in `extensions/core/extensions/subagents/agents/*.md`. Each file uses simple frontmatter (`key: value` scalars only; no comments, lists, or nested YAML) plus a markdown body used as role text. Supported keys are `name`, `description`, `tier` (`fast`, `high`, or `any`), `tools` (`none`, `read-only`, or `coding`), and `outputFormat`; explicit `spawn_subagent` parameters override preset defaults. `tier: any` leaves model selection on the normal parent fallback path.
-
-## Permissions extension
-
-The `core/extensions/permissions` extension gates every tool call through a policy engine. Use `/permissions` to view or change the active mode.
-
-### Modes
-
-| Mode         | Default behavior                                                                 | Config rules                     |
-| ------------ | -------------------------------------------------------------------------------- | -------------------------------- |
-| `safe`       | Allow read/grep/ls/find; ask everything else                                     | Honored                          |
-| `trusted`    | Allow path tools in cwd + known bash patterns; deny `rm -rf`, `curl\|bash`, etc. | Honored                          |
-| `open`       | Allow everything                                                                 | Ignored (only .env deny applies) |
-| `permissive` | Allow everything; ask only for commands matching config `ask` rules              | Honored, allow-before-ask        |
-
-### Precedence
-
-**safe / trusted**: `.env`-deny → config deny → config ask → config allow/grant → mode default
-
-**permissive**: `.env`-deny → config deny → config allow/grant → config ask → **allow** (grants override the ask-list)
-
-**open**: `.env`-deny → allow (config rules ignored)
-
-### Compound bash commands
-
-Commands are split on `&&`, `||`, `|`, `;`, newline, and `&` before matching:
-
-- **ALLOW** requires every segment covered by an allow rule or grant
-- **ASK** fires if any segment matches an ask rule
-- **DENY** fires if any segment matches a deny rule _or_ the whole command matches (preserves pipe-spanning patterns like `curl x | bash`)
-- Segments containing `$(…)` or backticks are never coverable → always ask/deny
-
-### Backward-compatibility note
-
-Upgrading from the initial permissions release changes matching for bash targets: patterns are now matched per-segment rather than against the whole command string. **Anchored single-command patterns** (e.g. `^npm\b`) are unaffected. If you saved a grant or config rule whose pattern contained `&&`, `|`, or `;` to match a whole compound string, it will no longer fire — re-author it as separate per-segment rules.
-
-Permissions are written to the `permissions` section of `.pi/core-settings.json`.
-
-### .env default-deny
-
-Direct `.env` path-tool targets are blocked in all modes. Override with an explicit config allow rule:
-
-```json
-{ "tool": "*", "action": "allow", "pattern": "\\.env\\.example$" }
-```
-
-### Headless sessions
-
-When `!hasUI` (print/RPC/automation), the extension always runs as `open` mode regardless of the persisted mode — write/bash/etc. are not gated.
+- [Core settings](docs/extensions/CORE_SETTINGS.md)
+- [Context usage](docs/extensions/CONTEXT.md)
+- [Worktrees](docs/extensions/WORKTREES.md)
+- [History search](docs/extensions/HISTORY_SEARCH.md)
+- [Prompt filler](docs/extensions/PROMPT_FILLER.md)
+- [Preset subagents](docs/extensions/PRESET_SUBAGENTS.md)
+- [Permissions](docs/extensions/PERMISSIONS.md)
 
 ## Testing
 
