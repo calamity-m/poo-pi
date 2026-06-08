@@ -6,7 +6,7 @@ import {
   type SessionEntry,
   type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
-import { Container, type Focusable, Input } from "@earendil-works/pi-tui";
+import { Container, type Focusable, Input, type KeyId } from "@earendil-works/pi-tui";
 
 import { readCoreHistorySearchSettingsSync } from "../config/persistence.ts";
 import { PanelChrome } from "../lib/ui/panel.ts";
@@ -57,11 +57,14 @@ interface SavedHistoryCache {
 /** Saved history cache shared by all invocations in this extension runtime. */
 const savedHistoryCache: SavedHistoryCache = { messages: [], loaded: false };
 
-/** Read the project-local shortcut at extension load time. */
-function readHistorySearchShortcut(): string {
-  return (
-    readCoreHistorySearchSettingsSync(process.cwd())?.shortcut ?? DEFAULT_HISTORY_SEARCH_SHORTCUT
-  );
+/**
+ * Read the project-local shortcut at extension load time. The persisted value is
+ * an arbitrary user string; Pi validates the exact key syntax at registration, so
+ * it is surfaced as a `KeyId` here.
+ */
+function readHistorySearchShortcut(): KeyId {
+  return (readCoreHistorySearchSettingsSync(process.cwd())?.shortcut ??
+    DEFAULT_HISTORY_SEARCH_SHORTCUT) as KeyId;
 }
 
 /** Register reverse history search via `/history` and the configured shortcut. */
@@ -323,11 +326,11 @@ class HistorySearchComponent extends Container implements Focusable {
   private focusedValue = false;
   private messages: readonly SearchableMessage[];
   private searchTheme: {
-    fg: (color: string, text: string) => string;
-    bold: (text: string) => string;
+    fg(color: string, text: string): string;
+    bold(text: string): string;
   };
   private chrome: PanelChrome;
-  private keybindings: { matches: (data: string, id: string) => boolean };
+  private keybindings: { matches(data: string, id: string): boolean };
   private done: (result: SearchableMessage | undefined) => void;
   private requestRender: () => void;
 
@@ -335,8 +338,8 @@ class HistorySearchComponent extends Container implements Focusable {
   constructor(
     messages: readonly SearchableMessage[],
     initialQuery: string,
-    theme: { fg: (color: string, text: string) => string; bold: (text: string) => string },
-    keybindings: { matches: (data: string, id: string) => boolean },
+    theme: { fg(color: string, text: string): string; bold(text: string): string },
+    keybindings: { matches(data: string, id: string): boolean },
     done: (result: SearchableMessage | undefined) => void,
     requestRender: () => void,
   ) {

@@ -495,8 +495,10 @@ async function configureSubagentTier(
     ctx.ui.notify(`[core-settings] unsupported thinking level selected: ${thinkingLevel}`, "error");
     return;
   }
-  const persistedThinkingLevel =
-    thinkingLevel && thinkingLevel !== "unset" ? thinkingLevel : undefined;
+  const persistedThinkingLevel: ThinkingLevel | undefined =
+    thinkingLevel && thinkingLevel !== "unset" && isSubagentThinkingLevel(thinkingLevel)
+      ? thinkingLevel
+      : undefined;
   const next = { ...current };
   next[tier] = {
     model: selectedModel,

@@ -87,10 +87,11 @@ This repo is primarily TypeScript plus Markdown and JSON package resources.
 
 Current runnable checks:
 
+- `npm run typecheck` runs `tsc --noEmit` over `extensions/**/*.ts` (also chained into `npm test`).
 - `npm run validate:json` validates `package.json` and theme JSON files.
 - `npm run pack:dry-run` verifies the package contents npm would publish.
 
-There is no pre-commit config in this repo yet. If checks are repeatedly missed, add a small pre-commit hook that runs the npm scripts above; if TypeScript grows beyond the current extension files, add an appropriate `tsc --noEmit` check before relying on reviews.
+There is no pre-commit config in this repo yet. If checks are repeatedly missed, add a small pre-commit hook that runs the npm scripts above.
 
 ## 8. Repository Map
 
