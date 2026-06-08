@@ -1,15 +1,7 @@
 import { getSettingsListTheme } from "@earendil-works/pi-coding-agent";
 import type { ThinkingLevel } from "@earendil-works/pi-agent-core";
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
-import {
-  Container,
-  type SettingItem,
-  SettingsList,
-  Text,
-  parseKey,
-  truncateToWidth,
-  visibleWidth,
-} from "@earendil-works/pi-tui";
+import { Container, type SettingItem, SettingsList, Text, parseKey } from "@earendil-works/pi-tui";
 
 import { coreSettingsPath } from "../config/paths.ts";
 import {
@@ -27,7 +19,7 @@ import {
 import type { PermissionsController } from "./permissions/index.ts";
 import type { PermissionMode } from "./permissions/types.ts";
 import { auditPaths, writeRedactionMode } from "./proxy/audit.ts";
-import { showInlinePanel } from "../lib/ui/panel.ts";
+import { PanelChrome, showInlinePanel } from "../lib/ui/panel.ts";
 import type { RedactionMode } from "./proxy/types.ts";
 import type { ClientTlsController } from "./tls/index.ts";
 
@@ -398,6 +390,7 @@ class ShortcutCapture {
   focused = false;
   private message: string | undefined;
   private readonly theme: ShortcutCaptureTheme;
+  private readonly chrome: PanelChrome;
   private readonly keybindings: ShortcutCaptureKeybindings;
   private readonly currentShortcut: string;
   private readonly done: (result: CapturedShortcut | undefined) => void;
@@ -412,6 +405,7 @@ class ShortcutCapture {
     requestRender: () => void,
   ) {
     this.theme = theme;
+    this.chrome = new PanelChrome(theme);
     this.keybindings = keybindings;
     this.currentShortcut = currentShortcut;
     this.done = done;
@@ -420,8 +414,6 @@ class ShortcutCapture {
 
   /** Render a compact bordered key-capture prompt. */
   render(width: number): string[] {
-    if (width < 4) return [truncateToWidth("shortcut", width, "")];
-    const innerWidth = width - 2;
     const lines = [
       this.theme.fg("accent", this.theme.bold("History search shortcut")),
       `Current: ${this.currentShortcut}`,
@@ -429,11 +421,7 @@ class ShortcutCapture {
       this.theme.fg("dim", "Esc/Ctrl+C cancels. /reload is required after save."),
     ];
     if (this.message) lines.push(this.message);
-    return [
-      this.borderLine("shortcut", width),
-      ...lines.map((line) => this.frameLine(line, innerWidth)),
-      this.theme.fg("border", `└${"─".repeat(innerWidth)}┘`),
-    ];
+    return this.chrome.render("shortcut", width, lines);
   }
 
   /** Capture the next keypress, or cancel on the configured select-cancel binding. */
@@ -455,21 +443,6 @@ class ShortcutCapture {
 
   /** No cached state to invalidate. */
   invalidate(): void {}
-
-  /** Render the top border with a title embedded. */
-  private borderLine(title: string, width: number): string {
-    const innerWidth = width - 2;
-    const label = ` ${truncateToWidth(title, Math.max(0, innerWidth - 2), "")} `;
-    const rule = "─".repeat(Math.max(0, innerWidth - label.length));
-    return this.theme.fg("border", `┌${label}${rule}┐`);
-  }
-
-  /** Render a padded content row between vertical borders. */
-  private frameLine(text: string, innerWidth: number): string {
-    const clipped = truncateToWidth(text, innerWidth, "");
-    const pad = " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
-    return `${this.theme.fg("border", "│")}${clipped}${pad}${this.theme.fg("border", "│")}`;
-  }
 }
 
 /** Return keybinding ids whose effective key list already includes the shortcut. */

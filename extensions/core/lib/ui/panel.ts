@@ -32,6 +32,40 @@ export interface PanelTheme {
   fg(color: string, text: string): string;
 }
 
+/** Shared panel chrome renderer for titled panels with no side borders. */
+export class PanelChrome {
+  private readonly theme: PanelTheme;
+
+  /** Build a panel chrome renderer using the provided color theme. */
+  constructor(theme: PanelTheme) {
+    this.theme = theme;
+  }
+
+  /** Render edge-to-edge rules, a visible title row, and padded content rows. */
+  render(title: string, width: number, lines: string[]): string[] {
+    if (width < 1) return [""];
+
+    return [
+      this.horizontalRule(width),
+      this.frameLine(this.theme.fg("accent", title), width),
+      ...lines.map((line) => this.frameLine(line, width)),
+      this.horizontalRule(width),
+    ];
+  }
+
+  /** Render an edge-to-edge horizontal rule. */
+  horizontalRule(width: number): string {
+    return this.theme.fg("border", "─".repeat(Math.max(0, width)));
+  }
+
+  /** Render one content line with right padding and no side borders. */
+  frameLine(text: string, contentWidth: number): string {
+    const clipped = truncateToWidth(text, contentWidth, "");
+    const pad = " ".repeat(Math.max(0, contentWidth - visibleWidth(clipped)));
+    return `${clipped}${pad}`;
+  }
+}
+
 /** Read-only panel that renders wrapped lines with arrow/page scrolling; Esc/Enter/q dismisses it. */
 export class TextPanel {
   focused = false;
@@ -39,6 +73,7 @@ export class TextPanel {
   private viewportHeight = 1;
   private totalRenderedLines = 1;
   private readonly theme: PanelTheme;
+  private readonly chrome: PanelChrome;
   private readonly keybindings: KeybindingsManager;
   private readonly requestRender: () => void;
   private readonly done: () => void;
@@ -55,6 +90,7 @@ export class TextPanel {
     lines: string[],
   ) {
     this.theme = theme;
+    this.chrome = new PanelChrome(theme);
     this.keybindings = keybindings;
     this.requestRender = requestRender;
     this.done = done;
@@ -91,7 +127,6 @@ export class TextPanel {
   render(width: number): string[] {
     if (width < 4) return [truncateToWidth(this.title, width, "")];
 
-    const borderInnerWidth = width - 2;
     const contentWidth = width;
     const footer = "↑/↓ PgUp/PgDn scroll • Esc/Enter/q close";
     const wrappedLines = this.lines.flatMap((line) =>
@@ -103,32 +138,11 @@ export class TextPanel {
     this.offset = Math.min(this.offset, maxOffset);
     const window = wrappedLines.slice(this.offset, this.offset + this.viewportHeight);
 
-    return [
-      this.borderLine(this.title, width),
-      ...window.map((line) =>
-        this.frameLine(truncateToWidth(line, contentWidth, ""), contentWidth),
-      ),
-      this.frameLine(this.theme.fg("dim", truncateToWidth(footer, contentWidth, "")), contentWidth),
-      this.theme.fg("border", `└${"─".repeat(borderInnerWidth)}┘`),
-    ];
+    return this.chrome.render(this.title, width, [...window, this.theme.fg("dim", footer)]);
   }
 
   /** No-op required by the Pi custom component lifecycle. */
   invalidate(): void {}
-
-  /** Render the top border with the panel title embedded. */
-  private borderLine(title: string, width: number): string {
-    const innerWidth = width - 2;
-    const label = ` ${truncateToWidth(title, Math.max(0, innerWidth - 2), "")} `;
-    const rule = "─".repeat(Math.max(0, innerWidth - label.length));
-    return this.theme.fg("border", `┌${label}${rule}┐`);
-  }
-
-  /** Render one content line with right padding and no side borders. */
-  private frameLine(text: string, contentWidth: number): string {
-    const pad = " ".repeat(Math.max(0, contentWidth - visibleWidth(text)));
-    return `${text}${pad}`;
-  }
 
   /** Shift the visible window, clamped to the content bounds. */
   private scroll(delta: number): void {

@@ -6,15 +6,10 @@ import {
   type SessionEntry,
   type SessionInfo,
 } from "@earendil-works/pi-coding-agent";
-import {
-  Container,
-  type Focusable,
-  Input,
-  truncateToWidth,
-  visibleWidth,
-} from "@earendil-works/pi-tui";
+import { Container, type Focusable, Input } from "@earendil-works/pi-tui";
 
 import { readCoreHistorySearchSettingsSync } from "../config/persistence.ts";
+import { PanelChrome } from "../lib/ui/panel.ts";
 
 /** Maximum number of live matches to show in the picker. */
 const MAX_RESULTS = 10;
@@ -331,6 +326,7 @@ class HistorySearchComponent extends Container implements Focusable {
     fg: (color: string, text: string) => string;
     bold: (text: string) => string;
   };
+  private chrome: PanelChrome;
   private keybindings: { matches: (data: string, id: string) => boolean };
   private done: (result: SearchableMessage | undefined) => void;
   private requestRender: () => void;
@@ -347,6 +343,7 @@ class HistorySearchComponent extends Container implements Focusable {
     super();
     this.messages = messages;
     this.searchTheme = theme;
+    this.chrome = new PanelChrome(theme);
     this.keybindings = keybindings;
     this.done = done;
     this.requestRender = requestRender;
@@ -375,10 +372,8 @@ class HistorySearchComponent extends Container implements Focusable {
 
   /** Render the search box, top matches, and compact key help inside a border. */
   render(width: number): string[] {
-    if (width < 4) return [truncateToWidth("history search", width, "")];
-
-    const innerWidth = width - 2;
-    const lines = this.input.render(Math.max(1, innerWidth));
+    const contentWidth = width;
+    const lines = this.input.render(Math.max(1, contentWidth));
 
     if (!this.input.getValue().trim()) {
       lines.push(this.searchTheme.fg("dim", "Type to search saved user messages…"));
@@ -386,16 +381,12 @@ class HistorySearchComponent extends Container implements Focusable {
       lines.push(this.searchTheme.fg("warning", "No matching user messages"));
     } else {
       for (let index = 0; index < this.results.length; index++) {
-        lines.push(this.renderResult(index, innerWidth));
+        lines.push(this.renderResult(index, contentWidth));
       }
     }
 
     lines.push(this.searchTheme.fg("dim", "↑↓ navigate • enter populate editor • esc cancel"));
-    return [
-      this.borderLine("history search", width),
-      ...lines.map((line) => this.frameLine(line, innerWidth)),
-      this.searchTheme.fg("border", `└${"─".repeat(innerWidth)}┘`),
-    ];
+    return this.chrome.render("history search", width, lines);
   }
 
   /** Route navigation keys to the result list and all other text editing to the input. */
@@ -452,21 +443,6 @@ class HistorySearchComponent extends Container implements Focusable {
     const label = truncate(this.results[index]?.label ?? "", Math.max(1, width - prefix.length));
     const line = `${prefix}${label}`;
     return index === this.selectedIndex ? this.searchTheme.fg("accent", line) : line;
-  }
-
-  /** Render the top border with a title embedded. */
-  private borderLine(title: string, width: number): string {
-    const innerWidth = width - 2;
-    const label = ` ${truncateToWidth(title, Math.max(0, innerWidth - 2), "")} `;
-    const rule = "─".repeat(Math.max(0, innerWidth - visibleWidth(label)));
-    return this.searchTheme.fg("border", `┌${label}${rule}┐`);
-  }
-
-  /** Render a padded content row between vertical borders. */
-  private frameLine(text: string, innerWidth: number): string {
-    const clipped = truncateToWidth(text, innerWidth, "");
-    const pad = " ".repeat(Math.max(0, innerWidth - visibleWidth(clipped)));
-    return `${this.searchTheme.fg("border", "│")}${clipped}${pad}${this.searchTheme.fg("border", "│")}`;
   }
 }
 
