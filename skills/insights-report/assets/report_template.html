@@ -234,6 +234,9 @@
         color: var(--muted);
         font-style: italic;
       }
+      td.muted {
+        color: var(--muted);
+      }
       .privacy {
         margin-top: 18px;
         background: rgba(240, 163, 94, 0.08);
@@ -275,15 +278,30 @@
 
       <h2>Activity over time</h2>
       <div class="bars">{{ACTIVITY_CHART}}</div>
+      {{TREND_NOTE}}
 
       <h2>When you work</h2>
       <div class="hour-row">{{HOUR_CHART}}</div>
       <div class="hour-labels">
         <span>00:00</span><span>06:00</span><span>12:00</span><span>18:00</span><span>23:00</span>
       </div>
+      <div class="hour-row">{{WEEKDAY_CHART}}</div>
+      <div class="hour-labels">
+        <span>Mon</span><span>Tue</span><span>Wed</span><span>Thu</span><span>Fri</span
+        ><span>Sat</span><span>Sun</span>
+      </div>
+      <p class="note">
+        Hours and days are shown in the local timezone of the machine that ran the analysis.
+      </p>
 
       <h2>By agent</h2>
       {{AGENT_TABLE}}
+
+      <h2>Models</h2>
+      {{MODELS_SECTION}}
+
+      <h2>Tool usage</h2>
+      {{TOOLS_SECTION}}
 
       <h2>Session length</h2>
       {{SESSION_LENGTH_SECTION}}

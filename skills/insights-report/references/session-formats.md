@@ -21,13 +21,18 @@ agent-agnostic. To support a new agent, add a parser and register it in
 
 Each line is an event with `message{role, content}`, `cwd`, `gitBranch`, and
 `timestamp`. `content` is a string or a list of blocks (`text`, `thinking`,
-`tool_use`, `tool_result`). `tool_result` blocks arrive under `role: "user"`, so
-the parser reclassifies them as tool turns by inspecting block shape.
+`tool_use`, `tool_result`). `tool_result` blocks arrive under `role: "user"`;
+the parser folds each result into its originating `tool_use` message (matched by
+`tool_use_id`) so one tool call counts as one tool turn, not two.
+
+Claude Code writes **one JSONL line per content block** of an assistant turn,
+repeating the same `message.id` and `usage` on each line. The parser dedupes
+usage by message id; naive per-line summing inflates token totals ~2–3x.
 
 - **cancels** — count of `[Request interrupted by user` markers in message text.
 - **rejections** — count of `The tool use was rejected` markers (emitted when the
   user declines a permission prompt for a tool call).
-- **errors** — not separately tracked for Claude Code.
+- **errors** — `tool_result` blocks with `is_error: true`.
 
 ### Codex
 
@@ -37,19 +42,22 @@ type `message`; `developer`/`system` roles are skipped as scaffolding. Tool call
 come from `function_call` / `local_shell_call` / `custom_tool_call` items.
 
 - **cancels** — count of `event_msg` payloads of type `turn_aborted`.
-- **rejections** — not reliably recorded in the rollout; reported as 0.
-- **errors** — not separately tracked.
+- **rejections** — not reliably recorded in the rollout; shown as n/a in the report.
+- **errors** — not separately tracked; shown as n/a in the report.
 
 ### Pi
 
 Typed lines: a `session` line (carries `cwd`, `id`) followed by `message` lines.
 `message.message.role` is `user`, `assistant`, or `toolResult`; content is a list
-of `text` / `thinking` blocks. Assistant turns carry a `stopReason`.
+of `text` / `thinking` blocks. Assistant turns carry a `stopReason`. Tool turns
+are counted from `toolResult` lines only (which carry the tool name and error
+status); counting assistant content blocks as well would double-count calls.
 
 - **cancels** — assistant turns with `stopReason == "aborted"` (user interrupt).
-- **errors** — assistant turns with `stopReason == "error"`.
+- **errors** — assistant turns with `stopReason == "error"` plus `toolResult`
+  lines with `isError: true`.
 - **rejections** — not distinctly recorded (tool errors are ordinary command
-  failures, not permission denials); reported as 0.
+  failures, not permission denials); shown as n/a in the report.
 
 ### OpenCode
 
@@ -60,13 +68,35 @@ records approval prompts but keys on `project_id`, not session, so denied prompt
 are attributed to that project's first session (approximate).
 
 - **rejections** — `permission` rows whose status is `denied`/`rejected`.
-- **cancels / errors** — best effort; tool parts with `state.status == "error"`
-  mark tool errors.
+- **errors** — tool parts with `state.status == "error"`.
+- **cancels** — not recorded; shown as n/a in the report.
 
 > **Untested locally:** the OpenCode parser was written against the known schema
 > but the development machine's `opencode.db` had zero sessions. Validate against
 > a populated database before trusting OpenCode numbers, and adjust the `data`
 > JSON field names if a newer OpenCode version changes them.
+
+## Counter coverage
+
+Not every agent records every friction counter. `fetch_sessions.py` exports a
+`friction_support` map in `sessions.json`, and the report renders "—" (n/a) for
+untracked counters so they cannot be misread as zero:
+
+| Agent       | cancels | rejections | errors |
+| ----------- | ------- | ---------- | ------ |
+| Claude Code | ✓       | ✓          | ✓      |
+| Codex       | ✓       | n/a        | n/a    |
+| Pi          | ✓       | n/a        | ✓      |
+| OpenCode    | n/a     | ✓          | ✓      |
+
+## Durations and windowing
+
+- Each session records both `duration_min` (wall-clock span, end − start) and
+  `active_min` (inter-message gaps summed with gaps over 30 minutes capped, so a
+  session left open overnight does not count as hours of work). `analyze.py`
+  uses active time for all duration statistics.
+- The `--days`/`--since` window matches on a session's **last activity**, not its
+  start, so long-lived sessions resumed inside the window are included.
 
 ## Compaction signals
 
@@ -100,7 +130,7 @@ differs per agent and cache semantics vary.
 
 | Agent       | Source                                                                                             | Accumulation                                                                                                                              |
 | ----------- | -------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| Claude Code | per-assistant-message `message.usage` (`input_tokens`, `output_tokens`, `cache_read_input_tokens`) | summed per turn                                                                                                                           |
+| Claude Code | per-assistant-message `message.usage` (`input_tokens`, `output_tokens`, `cache_read_input_tokens`) | summed per turn, **deduped by `message.id`** (CC repeats usage on every content-block line)                                               |
 | Pi          | per-assistant-message `message.usage` (`input`, `output`, `cacheRead`)                             | summed per turn                                                                                                                           |
 | OpenCode    | per-assistant `message.tokens` (`input`, `output`, `cache.read`)                                   | summed per turn                                                                                                                           |
 | Codex       | `event_msg` payload `token_count` → `info.total_token_usage`                                       | **cumulative** — last reading is the session total; `input_tokens` includes cached, so fresh input = `input_tokens − cached_input_tokens` |
@@ -119,8 +149,18 @@ parser drops these (via `_BOILERPLATE_PREFIXES`) when choosing the "first user
 prompt" and when building digests, so themes reflect what the human actually
 asked rather than injected text.
 
+## Digest truncation
+
+Digests are capped at ~9 KB. Over-budget sessions keep the **head and the tail**
+of the conversation (with an explicit "N turns omitted" marker) rather than only
+the head — friction, abandonment, and resolution cluster at the end of a session,
+so head-only truncation would bias synthesis toward how sessions started.
+
 ## Timestamps
 
 Timestamps appear as ISO-8601 strings (Claude Code, Codex, Pi `session`),
 epoch milliseconds (Pi message timestamps, OpenCode), or epoch seconds. `_parse_ts`
 normalizes all of these to epoch seconds (values above ~1e12 are treated as ms).
+`sessions.json` stores UTC ISO strings; `analyze.py` converts to the local
+timezone of the analyzing machine before bucketing hours, days, and streaks, so
+the "when you work" chart reflects local clock time.

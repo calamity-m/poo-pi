@@ -11,6 +11,7 @@ from __future__ import annotations
 import argparse
 import json
 import re
+import sys
 from pathlib import Path
 
 STOPWORDS = {"and", "the", "a", "an", "of", "for", "to", "in", "on", "with", "work", "ux", "ui"}
@@ -58,8 +59,26 @@ def _merge_named(items: list[dict], field: str) -> list[dict]:
 
 
 def merge(paths: list[Path]) -> dict:
-    """Merge batch synthesis files into a draft schema-version-3 synthesis object."""
-    loaded = [json.loads(p.read_text(encoding="utf-8")) for p in paths]
+    """Merge batch synthesis files into a draft schema-version-3 synthesis object.
+
+    Unreadable or invalid batch files are skipped and counted in
+    ``metadata.failed_batches`` so coverage gaps are visible in the report
+    instead of silently killing the merge.
+    """
+    loaded: list[dict] = []
+    failed = 0
+    for p in paths:
+        try:
+            data = json.loads(p.read_text(encoding="utf-8"))
+        except (OSError, ValueError) as e:
+            failed += 1
+            print(f"  ! skipping unreadable batch {p}: {e}", file=sys.stderr)
+            continue
+        if not isinstance(data, dict):
+            failed += 1
+            print(f"  ! skipping non-object batch {p}", file=sys.stderr)
+            continue
+        loaded.append(data)
     friction = [p for data in loaded for p in (data.get("friction_patterns", []) or [])]
     recommendations = [r for data in loaded for r in (data.get("recommendations", []) or [])]
     project_insights = [p for data in loaded for p in (data.get("project_insights", []) or [])]
@@ -76,7 +95,7 @@ def merge(paths: list[Path]) -> dict:
         "metadata": {
             "digest_count": digest_count,
             "batch_count": len(paths),
-            "failed_batches": 0,
+            "failed_batches": failed,
             "merge_helper": "scripts/merge_synthesis.py",
         },
     }
@@ -92,7 +111,9 @@ def main() -> int:
     paths = [Path(p) for p in args.inputs]
     draft = merge(paths)
     Path(args.out).write_text(json.dumps(draft, indent=2), encoding="utf-8")
-    print(f"Merged {len(paths)} batch files -> {args.out}")
+    failed = draft["metadata"]["failed_batches"]
+    suffix = f" ({failed} failed batch{'es' if failed != 1 else ''} skipped)" if failed else ""
+    print(f"Merged {len(paths) - failed} of {len(paths)} batch files -> {args.out}{suffix}")
     return 0
 
 

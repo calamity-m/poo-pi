@@ -50,7 +50,9 @@ metadata + counts + friction) and writes one condensed transcript per session
 into `$WS/digests/`. Useful flags:
 
 - `--agent {all,claude-code,codex,pi,opencode}` — limit to one agent (default `all`).
-- `--days N` — only sessions from the last N days (default 30; `0` = all time).
+- `--days N` — only sessions active in the last N days (default 30; `0` = all time).
+  The window matches on **last activity**, so a long-lived session resumed inside
+  the window is included even if it started earlier.
 - `--since YYYY-MM-DD` — explicit start date (overrides `--days`).
 - `--project SUBSTR` / `--cwd SUBSTR` — filter to a project or working directory.
 
@@ -64,10 +66,13 @@ the user the window you chose.
 python3 scripts/analyze.py --sessions "$WS/sessions.json" --out "$WS/analysis.json"
 ```
 
-Pure aggregation: totals, activity by day, hour-of-day histogram, session-length
-summary, compaction summary (total/auto/manual, flagging auto-compaction),
-best-effort token usage (work vs cache-read, per-agent), deterministic friction
-buckets, per-agent and per-project breakdowns, and the highest-friction sessions.
+Pure aggregation: totals, activity by day, hour-of-day and day-of-week histograms
+(converted to the local timezone), a first-half vs second-half trend, session-length
+summary based on **active time** (idle gaps over 30 minutes excluded) plus an
+abandoned-starts count, compaction summary (total/auto/manual, flagging
+auto-compaction), best-effort token usage (work vs cache-read, per-agent), model
+and tool-usage breakdowns, deterministic friction buckets with per-100-tool-call
+rates, per-agent and per-project breakdowns, and the highest-friction sessions.
 No model involved.
 
 ### 3. Synthesize (sub-agents)
@@ -90,7 +95,14 @@ JSON.
    agent provides. Give each the prompt in `references/synthesis-agent.md`, pointing
    it at its batch of digest files and a per-batch output path
    (e.g. `$WS/synth-batch-1.json`).
-3. Merge the per-batch JSON into a single `$WS/synthesis.json`. Deduplicate and
+3. After spawning, record batch metadata in `$WS/batches.json` so the report can
+   show synthesis coverage — a JSON array with one object per batch:
+   ```json
+   [{ "name": "synth-batch-1.json", "count": 18, "failed": false }]
+   ```
+   `count` is the number of digests in the batch; set `failed` to `true` for any
+   sub-agent that did not produce valid JSON.
+4. Merge the per-batch JSON into a single `$WS/synthesis.json`. Deduplicate and
    combine themes that clearly describe the same work; keep 4–8 themes total,
    the 2–4 most important friction patterns, compact project insights, and
    high-signal recommendations. Also combine `cross_session_threads` describing the
@@ -101,7 +113,9 @@ JSON.
    python3 scripts/merge_synthesis.py "$WS"/synth-batch-*.json --out "$WS/synthesis.json"
    ```
    Review and polish the resulting wording yourself; the helper does not call a
-   model and intentionally groups conservatively.
+   model and intentionally groups conservatively. It skips unreadable or invalid
+   batch files and reports them in `metadata.failed_batches` — if that is non-zero,
+   re-run the affected sub-agents or note the gap to the user.
 
 If the host agent cannot spawn sub-agents, fall back to reading digests yourself
 in small batches and writing `synthesis.json` directly — but prefer sub-agents,
@@ -120,7 +134,7 @@ python3 scripts/render_report.py \
 ```
 
 Omit `--synthesis` if you skipped stage 3, and omit `--batches` if you did not
-record batch metadata. The script fills
+record batch metadata (step 3 above). The script fills
 `assets/report_template.html` deterministically — the same inputs always yield
 the same HTML. Confirm there are no leftover `{{ }}` placeholders, then give the
 user the absolute path to `report.html` (and offer to open it).
@@ -134,9 +148,13 @@ user the absolute path to `report.html` (and offer to open it).
 - **Missing agents:** if an agent has no local history the fetch step simply
   reports `0 sessions` for it; that is expected, not an error.
 - **Friction semantics differ per agent** (e.g. Pi records cancels as a stop
-  reason, Claude Code as an interrupt marker). See
-  `references/session-formats.md` for exactly what each counter measures and its
-  known limitations before explaining numbers to the user.
+  reason, Claude Code as an interrupt marker), and not every agent records every
+  counter — the report renders "—" where a counter is not tracked, so do not read
+  those as zero. See `references/session-formats.md` for exactly what each counter
+  measures and its known limitations before explaining numbers to the user.
+- **Tests:** the pipeline has a fixture-based suite; run
+  `python3 -m unittest discover -s scripts/tests` from this skill's directory
+  after changing any script.
 - **Extending to a new agent:** add a parser in `fetch_sessions.py` that returns
   the common `Session`/`Message` shape and register it in `AGENT_PARSERS`; the
   rest of the pipeline needs no changes.

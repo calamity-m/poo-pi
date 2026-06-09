@@ -17,22 +17,28 @@ from collections import Counter, defaultdict
 from pathlib import Path
 
 
-def _date(iso: str | None) -> dt.date | None:
+def _local(iso: str | None) -> dt.datetime | None:
+    """Parse an ISO timestamp and convert to the local timezone.
+
+    Session timestamps are stored as UTC; bucketing days/hours without converting
+    would shift the "when you work" chart and day boundaries for non-UTC users.
+    """
     if not iso:
         return None
     try:
-        return dt.datetime.fromisoformat(iso).date()
+        return dt.datetime.fromisoformat(iso).astimezone()
     except ValueError:
         return None
+
+
+def _date(iso: str | None) -> dt.date | None:
+    d = _local(iso)
+    return d.date() if d else None
 
 
 def _hour(iso: str | None) -> int | None:
-    if not iso:
-        return None
-    try:
-        return dt.datetime.fromisoformat(iso).hour
-    except ValueError:
-        return None
+    d = _local(iso)
+    return d.hour if d else None
 
 
 def _longest_streak(days: set[dt.date]) -> int:
@@ -56,11 +62,16 @@ def _percentile(values: list[float], pct: float) -> float:
     return ordered[idx]
 
 
-def _session_length_summary(minutes: list[float]) -> dict:
-    """Summarize session durations to reveal context-window hygiene patterns."""
+def _session_length_summary(minutes: list[float], abandoned: int = 0) -> dict:
+    """Summarize active session durations to reveal context-window hygiene patterns.
+
+    `abandoned` counts false starts (at most one prompt and under two active
+    minutes), which would otherwise hide inside the <15m bucket.
+    """
     nonzero = [m for m in minutes if m > 0]
     if not nonzero:
-        return {"avg_min": 0, "median_min": 0, "p90_min": 0, "max_min": 0, "over_120_min": 0, "buckets": {}}
+        return {"avg_min": 0, "median_min": 0, "p90_min": 0, "max_min": 0, "over_120_min": 0,
+                "abandoned": abandoned, "buckets": {}}
     buckets = {
         "<15m": sum(1 for m in nonzero if m < 15),
         "15–60m": sum(1 for m in nonzero if 15 <= m < 60),
@@ -79,8 +90,10 @@ def _session_length_summary(minutes: list[float]) -> dict:
         "p90_min": round(_percentile(nonzero, 0.9), 1),
         "max_min": round(max(nonzero), 1),
         "over_120_min": over_120,
+        "abandoned": abandoned,
         "buckets": buckets,
         "interpretation": interpretation,
+        "note": "Durations are active time (idle gaps over 30 min are excluded), not wall-clock span.",
     }
 
 
@@ -128,8 +141,8 @@ def _tokens_summary(totals: dict, sessions_total: int) -> dict:
         interpretation = (
             f"{work:,} work tokens (input+output) and {cache_read:,} cache-read tokens. "
             + (
-                "Cache reads dwarf fresh work, which is normal for long multi-turn sessions but also a "
-                "context-bloat signal — pairs with the compaction numbers above."
+                "Cache reads far exceed fresh work — usually this just reflects many turns with prompt "
+                "caching doing its job; it only suggests context bloat if paired with heavy auto-compaction."
                 if ratio >= 3
                 else "Token use looks proportionate to the work done."
             )
@@ -145,6 +158,35 @@ def _tokens_summary(totals: dict, sessions_total: int) -> dict:
     }
 
 
+def _trend(by_day: dict) -> dict | None:
+    """Compare the first and second halves of the window for a simple trend signal.
+
+    Splits at the calendar midpoint of the observed date span (not at the median
+    active day, which would bias toward whichever half was busier).
+    """
+    if len(by_day) < 4:
+        return None
+    days = sorted(by_day)
+    mid = days[0] + (days[-1] - days[0]) / 2
+    first = [v for d, v in by_day.items() if d <= mid]
+    second = [v for d, v in by_day.items() if d > mid]
+    f_sessions = sum(v["sessions"] for v in first)
+    s_sessions = sum(v["sessions"] for v in second)
+    f_hours = sum(v["duration_hours"] for v in first)
+    s_hours = sum(v["duration_hours"] for v in second)
+    pct = round((s_sessions - f_sessions) / f_sessions * 100) if f_sessions else None
+    return {
+        "first_half": {"sessions": f_sessions, "duration_hours": round(f_hours, 1)},
+        "second_half": {"sessions": s_sessions, "duration_hours": round(s_hours, 1)},
+        "sessions_change_pct": pct,
+    }
+
+
+def _per_100(numerator: int, denominator: int) -> float:
+    """Rate per 100 events, so friction is comparable across busy and quiet rows."""
+    return round(numerator / denominator * 100, 1) if denominator else 0.0
+
+
 def analyze(index: dict) -> dict:
     """Turn a sessions.json index into the analysis.json structure."""
     sessions = index.get("sessions", [])
@@ -155,32 +197,46 @@ def analyze(index: dict) -> dict:
     sessions_with_compaction = 0
     sessions_with_auto = 0
     by_agent: dict[str, dict] = defaultdict(
-        lambda: {"sessions": 0, "duration_hours": 0.0, "tool_calls": 0,
+        lambda: {"sessions": 0, "duration_hours": 0.0, "tool_calls": 0, "user_prompts": 0,
                  "cancels": 0, "rejections": 0, "errors": 0,
                  "compactions": 0, "auto_compactions": 0, "tokens": 0}
     )
     by_project: dict[str, dict] = defaultdict(
         lambda: {"sessions": 0, "duration_hours": 0.0, "agents": set(), "agent_counts": Counter(),
-                 "cancels": 0, "rejections": 0, "errors": 0, "duration_minutes": [], "tokens": 0}
+                 "cancels": 0, "rejections": 0, "errors": 0, "duration_minutes": [],
+                 "tokens": 0, "tool_calls": 0}
     )
     by_day: dict[dt.date, dict] = defaultdict(lambda: {"sessions": 0, "duration_hours": 0.0})
     by_hour = [0] * 24
+    by_weekday = [0] * 7  # Monday..Sunday, local time
+    by_model: Counter = Counter()
+    by_tool: dict[str, dict] = defaultdict(lambda: {"calls": 0, "errors": 0})
     active_days: set[dt.date] = set()
     total_duration_h = 0.0
     total_tool_calls = 0
     total_user_prompts = 0
+    abandoned = 0
     session_minutes: list[float] = []
 
     for s in sessions:
         agent = s["agent"]
-        dur_h = s.get("duration_min", 0) / 60.0
+        # Prefer gap-capped active time; fall back to wall-clock span for old indexes.
+        dur_min = s["active_min"] if "active_min" in s else s.get("duration_min", 0)
+        dur_h = dur_min / 60.0
         fr = s.get("friction", {})
         cp = s.get("compaction", {})
         tok = s.get("tokens", {})
         session_tokens = tok.get("input", 0) + tok.get("output", 0)
         counts = s.get("counts", {})
 
-        session_minutes.append(s.get("duration_min", 0))
+        session_minutes.append(dur_min)
+        if counts.get("user", 0) <= 1 and dur_min < 2:
+            abandoned += 1
+        for model in s.get("models", []):
+            by_model[model] += 1
+        for name, t in (s.get("tools") or {}).items():
+            by_tool[name]["calls"] += t.get("calls", 0)
+            by_tool[name]["errors"] += t.get("errors", 0)
         total_duration_h += dur_h
         total_tool_calls += counts.get("tool_calls", 0)
         total_user_prompts += counts.get("user", 0)
@@ -199,6 +255,7 @@ def analyze(index: dict) -> dict:
         a["sessions"] += 1
         a["duration_hours"] += dur_h
         a["tool_calls"] += counts.get("tool_calls", 0)
+        a["user_prompts"] += counts.get("user", 0)
         for k in ("cancels", "rejections", "errors"):
             a[k] += fr.get(k, 0)
         a["compactions"] += cp.get("total", 0)
@@ -208,19 +265,21 @@ def analyze(index: dict) -> dict:
         p = by_project[s.get("project", "(unknown)")]
         p["sessions"] += 1
         p["duration_hours"] += dur_h
-        p["duration_minutes"].append(s.get("duration_min", 0))
+        p["duration_minutes"].append(dur_min)
         p["agents"].add(agent)
         p["agent_counts"][agent] += 1
         p["cancels"] += fr.get("cancels", 0)
         p["rejections"] += fr.get("rejections", 0)
         p["errors"] += fr.get("errors", 0)
         p["tokens"] += session_tokens
+        p["tool_calls"] += counts.get("tool_calls", 0)
 
         d = _date(s.get("start"))
         if d:
             active_days.add(d)
             by_day[d]["sessions"] += 1
             by_day[d]["duration_hours"] += dur_h
+            by_weekday[d.weekday()] += 1
         h = _hour(s.get("start"))
         if h is not None:
             by_hour[h] += 1
@@ -240,7 +299,13 @@ def analyze(index: dict) -> dict:
             "cancels": s["friction"]["cancels"],
             "rejections": s["friction"]["rejections"],
             "errors": s["friction"]["errors"],
-            "duration_min": s.get("duration_min", 0),
+            "duration_min": s["active_min"] if "active_min" in s else s.get("duration_min", 0),
+            "tool_calls": s.get("counts", {}).get("tool_calls", 0),
+            # Rate column: absolute counts favor long sessions, so show both.
+            "per_100_tools": _per_100(
+                s["friction"]["cancels"] + s["friction"]["rejections"] + s["friction"]["errors"],
+                s.get("counts", {}).get("tool_calls", 0),
+            ),
             "first_user_prompt": s["first_user_prompt"],
         }
         for s in ranked
@@ -271,7 +336,7 @@ def analyze(index: dict) -> dict:
             "permission_rejection": totals_friction["rejections"],
             "tool_runtime_error": totals_friction["errors"],
         },
-        "session_lengths": _session_length_summary(session_minutes),
+        "session_lengths": _session_length_summary(session_minutes, abandoned),
         "compaction": _compaction_summary(
             totals_compaction, len(sessions), sessions_with_compaction, sessions_with_auto
         ),
@@ -281,10 +346,23 @@ def analyze(index: dict) -> dict:
             if busiest_date is not None and busiest_stats is not None else None
         ),
         "by_agent": sorted(
-            ({"agent": k, **v, "duration_hours": round(v["duration_hours"], 1)}
+            ({"agent": k, **v, "duration_hours": round(v["duration_hours"], 1),
+              "friction_per_100_tools": _per_100(
+                  v["cancels"] + v["rejections"] + v["errors"], v["tool_calls"]),
+              "tools_per_prompt": round(v["tool_calls"] / v["user_prompts"], 1)
+              if v["user_prompts"] else 0}
              for k, v in by_agent.items()),
             key=lambda x: x["sessions"], reverse=True,
         ),
+        "by_model": [
+            {"model": m, "sessions": c} for m, c in by_model.most_common()
+        ],
+        "by_tool": sorted(
+            ({"tool": k, "calls": v["calls"], "errors": v["errors"],
+              "error_pct": _per_100(v["errors"], v["calls"])}
+             for k, v in by_tool.items()),
+            key=lambda x: x["calls"], reverse=True,
+        )[:15],
         "by_project": sorted(
             ({"project": k, "sessions": v["sessions"],
               "duration_hours": round(v["duration_hours"], 1),
@@ -293,6 +371,8 @@ def analyze(index: dict) -> dict:
               "dominant_agent": v["agent_counts"].most_common(1)[0][0] if v["agent_counts"] else None,
               "agents": sorted(v["agents"]),
               "cancels": v["cancels"], "rejections": v["rejections"], "errors": v["errors"],
+              "friction_per_100_tools": _per_100(
+                  v["cancels"] + v["rejections"] + v["errors"], v["tool_calls"]),
               "tokens": v["tokens"]}
              for k, v in by_project.items()),
             key=lambda x: x["sessions"], reverse=True,
@@ -303,6 +383,9 @@ def analyze(index: dict) -> dict:
             for d in sorted(by_day)
         ],
         "by_hour": by_hour,
+        "by_weekday": by_weekday,
+        "trend": _trend(by_day),
+        "friction_support": index.get("friction_support") or {},
         "top_friction_sessions": top_friction,
     }
 

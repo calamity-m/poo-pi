@@ -90,23 +90,41 @@ def hour_chart(by_hour: list[int]) -> str:
     )
 
 
-def agent_table(by_agent: list[dict]) -> str:
-    """Render the per-agent breakdown table."""
+def _friction_cell(agent: str, counter: str, value, support: dict) -> str:
+    """Render a friction count, or an n/a dash when the agent never records it.
+
+    Without this, an untracked counter renders as 0 and reads as "no friction".
+    """
+    agent_support = support.get(agent)
+    if agent_support is not None and not agent_support.get(counter, True):
+        return "<td class='num muted' title='Not recorded by this agent'>—</td>"
+    return f"<td class='num'>{esc(value)}</td>"
+
+
+def agent_table(by_agent: list[dict], support: dict | None = None) -> str:
+    """Render the per-agent breakdown table with rates and n/a for untracked counters."""
+    support = support or {}
     rows = "".join(
         f"<tr><td>{esc(a['agent'])}</td>"
         f"<td class='num'>{a['sessions']}</td>"
         f"<td class='num'>{a['duration_hours']}</td>"
         f"<td class='num'>{a['tool_calls']}</td>"
-        f"<td class='num'>{a['cancels']}</td>"
-        f"<td class='num'>{a['rejections']}</td>"
-        f"<td class='num'>{a['errors']}</td></tr>"
+        f"<td class='num'>{a.get('tools_per_prompt', '')}</td>"
+        + _friction_cell(a["agent"], "cancels", a["cancels"], support)
+        + _friction_cell(a["agent"], "rejections", a["rejections"], support)
+        + _friction_cell(a["agent"], "errors", a["errors"], support)
+        + f"<td class='num'>{a.get('friction_per_100_tools', '')}</td></tr>"
         for a in by_agent
     )
     return (
         "<table><thead><tr><th>Agent</th><th class='num'>Sessions</th>"
         "<th class='num'>Hours</th><th class='num'>Tool calls</th>"
+        "<th class='num'>Tools/prompt</th>"
         "<th class='num'>Cancels</th><th class='num'>Rejections</th>"
-        f"<th class='num'>Errors</th></tr></thead><tbody>{rows}</tbody></table>"
+        "<th class='num'>Errors</th><th class='num'>Friction/100 tools</th>"
+        f"</tr></thead><tbody>{rows}</tbody></table>"
+        '<p class="note">— means the agent does not record that counter, '
+        "so 0 would be misleading. Rates make agents comparable regardless of volume.</p>"
     )
 
 
@@ -117,13 +135,74 @@ def project_table(by_project: list[dict]) -> str:
         f"<td class='num'>{p['sessions']}</td>"
         f"<td class='num'>{p['duration_hours']}</td>"
         f"<td>{''.join(f'<span class=tag>{esc(a)}</span>' for a in p.get('agents', []))}</td>"
-        f"<td class='num'>{p.get('cancels', 0) + p.get('rejections', 0) + p.get('errors', 0)}</td></tr>"
+        f"<td class='num'>{p.get('cancels', 0) + p.get('rejections', 0) + p.get('errors', 0)}</td>"
+        f"<td class='num'>{p.get('friction_per_100_tools', '')}</td></tr>"
         for p in by_project
     )
     return (
         "<table><thead><tr><th>Project</th><th class='num'>Sessions</th>"
         "<th class='num'>Hours</th><th>Agents</th>"
-        f"<th class='num'>Friction</th></tr></thead><tbody>{rows}</tbody></table>"
+        "<th class='num'>Friction</th><th class='num'>Per 100 tools</th>"
+        f"</tr></thead><tbody>{rows}</tbody></table>"
+    )
+
+
+def models_section(by_model: list[dict]) -> str:
+    """Render which models were used and in how many sessions."""
+    if not by_model:
+        return '<p class="empty">No model information recorded in range.</p>'
+    return "<div>" + "".join(
+        f'<span class="tag">{esc(m["model"])}: {esc(m["sessions"])} sessions</span>'
+        for m in by_model
+    ) + "</div>"
+
+
+def tools_section(by_tool: list[dict]) -> str:
+    """Render top tools by call volume with their error rates."""
+    if not by_tool:
+        return '<p class="empty">No tool usage recorded in range.</p>'
+    rows = "".join(
+        f"<tr><td>{esc(t['tool'])}</td>"
+        f"<td class='num'>{t['calls']}</td>"
+        f"<td class='num'>{t['errors']}</td>"
+        f"<td class='num'>{t['error_pct']}%</td></tr>"
+        for t in by_tool
+    )
+    return (
+        "<table><thead><tr><th>Tool</th><th class='num'>Calls</th>"
+        "<th class='num'>Errors</th><th class='num'>Error rate</th>"
+        f"</tr></thead><tbody>{rows}</tbody></table>"
+    )
+
+
+_WEEKDAYS = ("Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun")
+
+
+def weekday_chart(by_weekday: list[int]) -> str:
+    """Render a Monday-to-Sunday session histogram."""
+    if not by_weekday or not any(by_weekday):
+        return ""
+    peak = max(by_weekday) or 1
+    return "".join(
+        f'<div class="hbar" style="height:{max(2, round(c / peak * 100))}%" '
+        f'title="{_WEEKDAYS[i]} — {c} sessions"></div>'
+        for i, c in enumerate(by_weekday)
+    )
+
+
+def trend_note(trend: dict | None) -> str:
+    """Render a first-half vs second-half comparison of the window."""
+    if not trend:
+        return ""
+    f, s = trend.get("first_half", {}), trend.get("second_half", {})
+    pct = trend.get("sessions_change_pct")
+    direction = ""
+    if pct is not None:
+        direction = f" — {'up' if pct >= 0 else 'down'} {abs(pct)}% in the second half"
+    return (
+        f'<p class="note">Trend: {f.get("sessions", 0)} sessions ({f.get("duration_hours", 0)}h) '
+        f'in the first half of the window vs {s.get("sessions", 0)} ({s.get("duration_hours", 0)}h) '
+        f"in the second{esc(direction)}.</p>"
     )
 
 
@@ -137,6 +216,7 @@ def session_length_section(lengths: dict) -> str:
         ("P90", f'{lengths.get("p90_min", 0)}m'),
         ("Longest", f'{lengths.get("max_min", 0)}m'),
         ("2h+ sessions", lengths.get("over_120_min", 0)),
+        ("Abandoned starts", lengths.get("abandoned", 0)),
     ]
     cards_html = "".join(
         f'<div class="card"><div class="num">{esc(v)}</div><div class="lbl">{esc(k)}</div></div>'
@@ -148,7 +228,9 @@ def session_length_section(lengths: dict) -> str:
         for k, v in buckets.items()
     )
     note = lengths.get("interpretation") or "Long sessions can indicate deep flow, but repeated 2h+ sessions may deserve deliberate context resets."
-    return f'<div class="cards">{cards_html}</div><p class="note">{esc(note)}</p><div>{bucket_html}</div>'
+    sub = lengths.get("note", "")
+    sub_html = f'<p class="note">{esc(sub)}</p>' if sub else ""
+    return f'<div class="cards">{cards_html}</div><p class="note">{esc(note)}</p><div>{bucket_html}</div>{sub_html}'
 
 
 def _humanize(n: int | float) -> str:
@@ -250,13 +332,15 @@ def friction_table(rows: list[dict]) -> str:
     body = "".join(
         f"<tr><td>{esc(s['agent'])}</td><td>{esc(s['project'])}</td>"
         f"<td class='num'>{s['cancels']}</td><td class='num'>{s['rejections']}</td>"
-        f"<td class='num'>{s['errors']}</td><td class='num'>{s.get('duration_min', '')}</td>"
+        f"<td class='num'>{s['errors']}</td><td class='num'>{s.get('per_100_tools', '')}</td>"
+        f"<td class='num'>{s.get('duration_min', '')}</td>"
         f"<td class='prompt' title=\"{esc(s['first_user_prompt'])}\">{esc(s['first_user_prompt'])}</td></tr>"
         for s in rows
     )
     return (
         "<table><thead><tr><th>Agent</th><th>Project</th>"
         "<th class='num'>Cancels</th><th class='num'>Rej.</th><th class='num'>Err.</th>"
+        "<th class='num'>Per 100 tools</th>"
         f"<th class='num'>Min.</th><th>Prompt</th></tr></thead><tbody>{body}</tbody></table>"
     )
 
@@ -335,9 +419,9 @@ def _deterministic_recommendations(analysis: dict) -> list[dict]:
         })
     if friction.get("cancels", 0):
         recs.append({
-            "title": "Tighten prompts before interrupting",
-            "why": f'{friction.get("cancels", 0)} cancels suggest some runs went off-track or outlived their usefulness.',
-            "next_step": "For ambiguous requests, require assumptions and a short plan before implementation.",
+            "title": "Review what triggered interrupted runs",
+            "why": f'{friction.get("cancels", 0)} cancels were recorded — many are normal steering, but clusters in one project or task can mean runs drifting off-track.',
+            "next_step": "Skim the highest-friction sessions table; where cancels cluster, ask for assumptions and a short plan before implementation.",
         })
     if friction.get("rejections", 0) or friction.get("errors", 0):
         recs.append({
@@ -431,8 +515,14 @@ def render(analysis: dict, synth: dict | None, batches: list | None = None) -> s
         "{{GENERATED_AT}}": esc(analysis.get("generated_at", dt.datetime.now().isoformat())[:19]),
         "{{STAT_CARDS}}": stat_cards(t),
         "{{ACTIVITY_CHART}}": activity_chart(analysis.get("by_day", [])),
+        "{{TREND_NOTE}}": trend_note(analysis.get("trend")),
         "{{HOUR_CHART}}": hour_chart(analysis.get("by_hour", [0] * 24)),
-        "{{AGENT_TABLE}}": agent_table(analysis.get("by_agent", [])),
+        "{{WEEKDAY_CHART}}": weekday_chart(analysis.get("by_weekday", [])),
+        "{{AGENT_TABLE}}": agent_table(
+            analysis.get("by_agent", []), analysis.get("friction_support")
+        ),
+        "{{MODELS_SECTION}}": models_section(analysis.get("by_model", [])),
+        "{{TOOLS_SECTION}}": tools_section(analysis.get("by_tool", [])),
         "{{PROJECT_TABLE}}": project_table(analysis.get("by_project", [])),
         "{{SESSION_LENGTH_SECTION}}": session_length_section(analysis.get("session_lengths", {})),
         "{{COMPACTION_SECTION}}": compaction_section(
