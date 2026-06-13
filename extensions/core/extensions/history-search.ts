@@ -58,7 +58,7 @@ interface SavedHistoryCache {
 const savedHistoryCache: SavedHistoryCache = { messages: [], loaded: false };
 
 /**
- * Read the project-local shortcut at extension load time. The persisted value is
+ * Read the centralized shortcut at extension load time. The persisted value is
  * an arbitrary user string; Pi validates the exact key syntax at registration, so
  * it is surfaced as a `KeyId` here.
  */

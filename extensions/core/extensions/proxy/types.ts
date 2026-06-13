@@ -1,16 +1,5 @@
 import type { Server } from "node:http";
 
-import type { ClientTlsProvider } from "../tls/index.ts";
-
-/** Options used to wire proxy support to core TLS without reading TLS at registration time. */
-export interface RegisterProxyOptions {
-  /**
-   * Lazy-read TLS provider. The proxy reads it per request and attaches the client
-   * certificate when one is loaded; it never blocks traffic when none is (see {@link resolveProxyClientTls}).
-   */
-  tlsProvider: ClientTlsProvider;
-}
-
 /** A single proxied provider: its name, the captured upstream base URL, and the local route id it is served under. */
 export interface ProxyRoute {
   /** Provider name as it appears in the model registry. */

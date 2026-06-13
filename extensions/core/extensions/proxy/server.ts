@@ -6,7 +6,6 @@ import {
   type ServerResponse,
 } from "node:http";
 
-import type { ClientTlsProvider } from "../tls/index.ts";
 import {
   buildAuditRecord,
   describeError,
@@ -15,7 +14,6 @@ import {
   persistAuditRecord,
   readRedactionMode,
 } from "./audit.ts";
-import { resolveProxyClientTls } from "./tls.ts";
 import type { AuditResponse, ProxyState } from "./types.ts";
 import { requestUpstream } from "./upstream.ts";
 
@@ -36,14 +34,9 @@ const STRIPPED_HEADERS = [
  * leaves `state.port` unset so callers skip base-URL overrides.
  *
  * @param state Shared proxy runtime state, populated with the server, port, and audit dir.
- * @param tlsProvider Lazy TLS provider read per request for client-cert origination.
  * @param cwd Working directory under which the audit store lives.
  */
-export async function startProxyServer(
-  state: ProxyState,
-  tlsProvider: ClientTlsProvider,
-  cwd: string,
-): Promise<void> {
+export async function startProxyServer(state: ProxyState, cwd: string): Promise<void> {
   if (state.server) return;
   try {
     const store = await ensureAuditStore(cwd);
@@ -52,7 +45,7 @@ export async function startProxyServer(
   } catch (error) {
     state.writeErrors.push(`audit store init failed: ${describeError(error)}`);
   }
-  await listen(state, tlsProvider);
+  await listen(state);
 }
 
 /** Stop the proxy server and clear its bound state. */
@@ -65,10 +58,10 @@ export async function stopProxyServer(state: ProxyState): Promise<void> {
 }
 
 /** Create and bind the server, resolving once it is listening or its bind has failed. */
-function listen(state: ProxyState, tlsProvider: ClientTlsProvider): Promise<void> {
+function listen(state: ProxyState): Promise<void> {
   return new Promise<void>((resolve) => {
     const server = createServer((req, res) => {
-      void handleRequest(state, tlsProvider, req, res);
+      void handleRequest(state, req, res);
     });
     server.once("error", (error) => {
       state.startError = describeError(error);
@@ -86,13 +79,11 @@ function listen(state: ProxyState, tlsProvider: ClientTlsProvider): Promise<void
 
 /**
  * Handle one inbound proxy request: resolve its route, buffer the body, forward
- * it upstream with client TLS attached when loaded, and pipe the response back
- * unbuffered. Audit persistence runs after the response is forwarded, never on
- * its critical path.
+ * it upstream, and pipe the response back unbuffered. Audit persistence runs
+ * after the response is forwarded, never on its critical path.
  */
 async function handleRequest(
   state: ProxyState,
-  tlsProvider: ClientTlsProvider,
   req: IncomingMessage,
   res: ServerResponse,
 ): Promise<void> {
@@ -109,7 +100,6 @@ async function handleRequest(
   const upstreamUrl = `${route.upstreamBaseUrl}${match![2] ?? ""}${parsed.search}`;
   const headers = rebuildHeaders(req.headers);
   const body = await readBody(req);
-  const tlsOptions = resolveProxyClientTls(tlsProvider);
   const id = nextAuditId(state);
 
   const finish = (response: AuditResponse) =>
@@ -125,10 +115,12 @@ async function handleRequest(
     });
 
   try {
-    const upstream = await requestUpstream(
-      { url: upstreamUrl, method: req.method ?? "GET", headers, body },
-      tlsOptions,
-    );
+    const upstream = await requestUpstream({
+      url: upstreamUrl,
+      method: req.method ?? "GET",
+      headers,
+      body,
+    });
     res.writeHead(upstream.statusCode ?? 502, upstream.headers);
     upstream.pipe(res);
     upstream.once("end", () =>

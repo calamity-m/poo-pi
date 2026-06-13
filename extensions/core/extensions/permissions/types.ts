@@ -1,4 +1,4 @@
-/** Active permission mode for the current project. */
+/** Active permission mode for the current session. */
 export type PermissionMode = "safe" | "trusted" | "open" | "permissive";
 
 /** Action outcome for a policy rule. */
@@ -7,7 +7,7 @@ export type RuleAction = "allow" | "ask" | "deny";
 /** Decision outcome from the policy engine. */
 export type Decision = "allow" | "ask" | "deny";
 
-/** A human-authored config rule stored in `.pi/core-settings.json`. */
+/** A human-authored config rule stored in centralized core settings. */
 export interface Rule {
   /** Tool name or `"*"` to match all tools. */
   tool: string;
@@ -29,7 +29,7 @@ export interface RememberedGrant {
   pattern?: string;
 }
 
-/** Permissions section shape inside `.pi/core-settings.json`. */
+/** Permissions section shape inside centralized core settings. */
 export interface PersistedPermissionConfig {
   mode: PermissionMode;
   rules: Rule[];

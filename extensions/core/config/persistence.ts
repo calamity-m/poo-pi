@@ -10,9 +10,8 @@ import type {
   Rule,
   RuleAction,
 } from "../extensions/permissions/types.ts";
-import type { SourceTarget } from "../extensions/tls/types.ts";
 import { createDefaultCoreSettings } from "./defaults.ts";
-import { coreSettingsPath, cwdFromProxyAuditDir, globalCoreSettingsPath } from "./paths.ts";
+import { coreSettingsPath, globalCoreSettingsPath } from "./paths.ts";
 import type {
   CoreFooterSettings,
   CoreHistorySearchSettings,
@@ -21,41 +20,44 @@ import type {
   CoreWorktreeSettings,
 } from "./types.ts";
 
-/** Read unified core settings from `.pi/core-settings.json`, returning defaults when absent or malformed. */
-export async function readCoreSettings(cwd: string): Promise<CoreSettings> {
+/** Read centralized core settings from `~/.pi/agent/poo/core-settings.json`, returning defaults when absent or malformed. */
+export async function readCoreSettings(cwd?: string): Promise<CoreSettings> {
   return await readCoreSettingsFile(coreSettingsPath(cwd));
 }
 
-/** Read user-scoped core settings from `~/.pi/agent/core-settings.json`. */
+/** Read centralized core settings from `~/.pi/agent/poo/core-settings.json`. */
 export async function readGlobalCoreSettings(): Promise<CoreSettings> {
   return await readCoreSettingsFile(globalCoreSettingsPath());
 }
 
-/** Validate and persist unified core settings to `.pi/core-settings.json`. */
-export async function writeCoreSettings(cwd: string, settings: CoreSettings): Promise<void> {
+/** Validate and persist centralized core settings to `~/.pi/agent/poo/core-settings.json`. */
+export async function writeCoreSettings(
+  cwd: string | undefined,
+  settings: CoreSettings,
+): Promise<void> {
   await writeCoreSettingsFile(coreSettingsPath(cwd), settings);
 }
 
-/** Validate and persist user-scoped core settings to `~/.pi/agent/core-settings.json`. */
+/** Validate and persist centralized core settings to `~/.pi/agent/poo/core-settings.json`. */
 export async function writeGlobalCoreSettings(settings: CoreSettings): Promise<void> {
   await writeCoreSettingsFile(globalCoreSettingsPath(), settings);
 }
 
-/** Read the permissions section from unified core settings. */
+/** Read the permissions section from centralized core settings. */
 export async function readCorePermissionConfig(
   cwd: string,
 ): Promise<PersistedPermissionConfig | undefined> {
   return (await readCoreSettings(cwd)).permissions;
 }
 
-/** Read the user-scoped permissions defaults from global core settings. */
+/** Read permissions defaults from centralized core settings. */
 export async function readGlobalCorePermissionConfig(): Promise<
   PersistedPermissionConfig | undefined
 > {
   return (await readGlobalCoreSettings()).permissions;
 }
 
-/** Persist the permissions section in unified core settings. */
+/** Persist the permissions section in centralized core settings. */
 export async function writeCorePermissionConfig(
   cwd: string,
   permissions: PersistedPermissionConfig,
@@ -65,7 +67,7 @@ export async function writeCorePermissionConfig(
   await writeCoreSettings(cwd, settings);
 }
 
-/** Persist the user-scoped permissions defaults in global core settings. */
+/** Persist permissions defaults in centralized core settings. */
 export async function writeGlobalCorePermissionConfig(
   permissions: PersistedPermissionConfig,
 ): Promise<void> {
@@ -74,61 +76,25 @@ export async function writeGlobalCorePermissionConfig(
   await writeGlobalCoreSettings(settings);
 }
 
-/** Read non-secret client TLS target metadata from unified core settings. */
-export async function readCoreClientTlsTarget(cwd: string): Promise<SourceTarget | undefined> {
-  return (await readCoreSettings(cwd)).tls?.target;
+/** Read proxy audit redaction mode from centralized core settings. */
+export async function readCoreProxyRedactionMode(_auditDir: string): Promise<RedactionMode> {
+  return (await readCoreSettings()).proxy?.audit?.redact ?? "on";
 }
 
-/** Persist non-secret client TLS target metadata in unified core settings. */
-export async function writeCoreClientTlsTarget(cwd: string, target: SourceTarget): Promise<void> {
-  const settings = await readCoreSettings(cwd);
-  settings.tls = { ...settings.tls, target };
-  await writeCoreSettings(cwd, settings);
-}
-
-/** Read whether client TLS resolution should be skipped at startup. */
-export async function readCoreClientTlsSkip(cwd: string): Promise<boolean> {
-  return (await readCoreSettings(cwd)).tls?.skip ?? false;
-}
-
-/** Persist whether client TLS resolution should be skipped at startup. */
-export async function writeCoreClientTlsSkip(cwd: string, skip: boolean): Promise<void> {
-  const settings = await readCoreSettings(cwd);
-  settings.tls = { ...settings.tls, skip };
-  await writeCoreSettings(cwd, settings);
-}
-
-/** Return whether unified client TLS metadata exists. */
-export function hasCoreClientTlsConfig(cwd: string): boolean {
-  try {
-    const parsed = parseCoreSettings(JSON.parse(readFileSync(coreSettingsPath(cwd), "utf8")));
-    return Boolean(parsed?.tls?.target);
-  } catch {
-    return false;
-  }
-}
-
-/** Read proxy audit redaction mode from unified core settings. */
-export async function readCoreProxyRedactionMode(auditDir: string): Promise<RedactionMode> {
-  const cwd = cwdFromProxyAuditDir(auditDir);
-  return (await readCoreSettings(cwd)).proxy?.audit?.redact ?? "on";
-}
-
-/** Persist proxy audit redaction mode in unified core settings. */
+/** Persist proxy audit redaction mode in centralized core settings. */
 export async function writeCoreProxyRedactionMode(
-  auditDir: string,
+  _auditDir: string,
   mode: RedactionMode,
 ): Promise<void> {
-  const cwd = cwdFromProxyAuditDir(auditDir);
-  const settings = await readCoreSettings(cwd);
+  const settings = await readCoreSettings();
   settings.proxy = {
     ...settings.proxy,
     audit: { ...settings.proxy?.audit, redact: mode },
   };
-  await writeCoreSettings(cwd, settings);
+  await writeCoreSettings(undefined, settings);
 }
 
-/** Read history search settings from unified core settings. */
+/** Read history search settings from centralized core settings. */
 export async function readCoreHistorySearchSettings(
   cwd: string,
 ): Promise<CoreHistorySearchSettings | undefined> {
@@ -157,7 +123,7 @@ export async function writeCoreHistorySearchSettings(
   await writeCoreSettings(cwd, settings);
 }
 
-/** Read footer settings from unified core settings. */
+/** Read footer settings from centralized core settings. */
 export async function readCoreFooterSettings(cwd: string): Promise<CoreFooterSettings | undefined> {
   return (await readCoreSettings(cwd)).footer;
 }
@@ -172,7 +138,7 @@ export async function writeCoreFooterSettings(
   await writeCoreSettings(cwd, settings);
 }
 
-/** Read managed worktree settings from unified (project-local) core settings. */
+/** Read managed worktree settings from centralized core settings. */
 export async function readCoreWorktreeSettings(
   cwd: string,
 ): Promise<CoreWorktreeSettings | undefined> {
@@ -189,12 +155,12 @@ export async function writeCoreWorktreeSettings(
   await writeCoreSettings(cwd, settings);
 }
 
-/** Read user-scoped subagent tier settings from global core settings. */
+/** Read subagent tier settings from centralized core settings. */
 export async function readGlobalCoreSubagentSettings(): Promise<CoreSubagentSettings | undefined> {
   return (await readGlobalCoreSettings()).subagents;
 }
 
-/** Persist user-scoped subagent tier settings without disturbing other global settings sections. */
+/** Persist subagent tier settings without disturbing other centralized settings sections. */
 export async function writeGlobalCoreSubagentSettings(
   subagents: CoreSubagentSettings,
 ): Promise<void> {
@@ -208,8 +174,6 @@ export function validateCoreSettings(value: unknown): CoreSettings | string {
   if (!isRecord(value)) return "config must be a JSON object";
   const permissionsError = validatePermissionSection(value["permissions"]);
   if (permissionsError) return permissionsError;
-  const tlsError = validateTlsSection(value["tls"]);
-  if (tlsError) return tlsError;
   const proxyError = validateProxySection(value["proxy"]);
   if (proxyError) return proxyError;
   const subagentsError = validateSubagentSection(value["subagents"]);
@@ -231,9 +195,6 @@ export function parseCoreSettings(value: unknown): CoreSettings | undefined {
 
   const permissions = parsePermissionConfig(raw["permissions"]);
   if (permissions) out.permissions = permissions;
-
-  const tls = parseTlsSettings(raw["tls"]);
-  if (tls) out.tls = tls;
 
   const proxy = parseProxySettings(raw["proxy"]);
   if (proxy) out.proxy = proxy;
@@ -285,17 +246,6 @@ function validatePermissionSection(value: unknown): string | undefined {
     return '"permissions.rules" must be an array';
   if (value["remembered"] !== undefined && !Array.isArray(value["remembered"]))
     return '"permissions.remembered" must be an array';
-  return undefined;
-}
-
-/** Validate the TLS section when present in edited core settings. */
-function validateTlsSection(value: unknown): string | undefined {
-  if (value === undefined) return undefined;
-  if (!isRecord(value)) return '"tls" must be an object';
-  if (value["target"] !== undefined && !parseSourceTarget(value["target"]))
-    return '"tls.target" must include string sourceId, locator, and label';
-  if (value["skip"] !== undefined && typeof value["skip"] !== "boolean")
-    return '"tls.skip" must be a boolean';
   return undefined;
 }
 
@@ -434,35 +384,6 @@ function parseRemembered(value: unknown): RememberedGrant[] {
     if (grant.dirPrefix || grant.pattern) remembered.push(grant);
   }
   return remembered;
-}
-
-/** Parse the TLS section, retaining the target metadata and/or the skip flag. */
-function parseTlsSettings(value: unknown): CoreSettings["tls"] | undefined {
-  if (!isRecord(value)) return undefined;
-  const target = parseSourceTarget(value["target"]);
-  const skip = typeof value["skip"] === "boolean" ? value["skip"] : undefined;
-  if (!target && skip === undefined) return undefined;
-  const out: CoreSettings["tls"] = {};
-  if (target) out.target = target;
-  if (skip !== undefined) out.skip = skip;
-  return out;
-}
-
-/** Parse a non-secret TLS source target. */
-function parseSourceTarget(value: unknown): SourceTarget | undefined {
-  if (!isRecord(value)) return undefined;
-  if (
-    typeof value["sourceId"] === "string" &&
-    typeof value["locator"] === "string" &&
-    typeof value["label"] === "string"
-  ) {
-    return {
-      sourceId: value["sourceId"],
-      locator: value["locator"],
-      label: value["label"],
-    };
-  }
-  return undefined;
 }
 
 /** Parse the proxy section. */

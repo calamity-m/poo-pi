@@ -1,6 +1,6 @@
 # Permissions extension
 
-The `core/extensions/permissions` extension gates every tool call through a policy engine. Use `/permissions` to view or change the active mode. In the interactive picker, press `d` on a highlighted mode to save it as the user-scoped default for new projects; `/permissions default [mode]` does the same from the command line.
+The `core/extensions/permissions` extension gates every tool call through a policy engine. Use `/permissions` to view or change the active mode. In the interactive picker, press `d` on a highlighted mode to save it as the central default; `/permissions default [mode]` does the same from the command line.
 
 ## Modes
 
@@ -32,7 +32,7 @@ Commands are split on `&&`, `||`, `|`, `;`, newline, and `&` before matching:
 
 Upgrading from the initial permissions release changes matching for bash targets: patterns are now matched per-segment rather than against the whole command string. **Anchored single-command patterns** (e.g. `^npm\b`) are unaffected. If you saved a grant or config rule whose pattern contained `&&`, `|`, or `;` to match a whole compound string, it will no longer fire — re-author it as separate per-segment rules.
 
-Project permissions are written to the `permissions` section of `.pi/core-settings.json`. When that section is absent, the extension falls back to the user-scoped default mode in `~/.pi/agent/core-settings.json`, then to the built-in `trusted` default.
+Permissions are written to the `permissions` section of `~/.pi/agent/poo/core-settings.json` (or `$PI_CODING_AGENT_DIR/poo/core-settings.json`). When that section is absent, the extension falls back to the built-in `trusted` default.
 
 ## .env default-deny
 

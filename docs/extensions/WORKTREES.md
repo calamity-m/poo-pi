@@ -14,7 +14,7 @@ The `add_git_worktree` tool creates a Git worktree under a managed root in a pre
 
 Worktrees are created under `<root>/<repo-namespace>/<label>`:
 
-- `<root>` defaults to `~/.pi/worktrees` and is configurable per-project (see below).
+- `<root>` defaults to `~/.pi/worktrees` and is configurable centrally (see below).
 - `<repo-namespace>` combines the sanitized repository basename with a short stable hash of the resolved Git top-level path (for example `poo-pi-a1b2c3d4`), so unrelated repositories with the same basename never collide.
 - `<label>` is derived from the optional `label` argument or the branch/ref input, sanitized to a single safe path segment; collisions get a numeric suffix.
 
@@ -61,7 +61,7 @@ New branch from a start point, in another repository:
 
 ### Settings
 
-`worktrees.root` lives in the project-local `.pi/core-settings.json`. Edit it through the **Managed worktree root** row in `/core-settings`, or directly through `/core-settings edit`:
+`worktrees.root` lives in the central `~/.pi/agent/poo/core-settings.json`. Edit it through the **Managed worktree root** row in `/core-settings`, or directly through `/core-settings edit`:
 
 ```json
 {

@@ -24,12 +24,9 @@ import {
 } from "../extensions/core/extensions/proxy/audit.ts";
 import { readCoreProxyRedactionMode } from "../extensions/core/config/persistence.ts";
 
-const unloadedTls = {
-  getClientTls: () => undefined,
-  getClientTlsStatus: () => ({ status: "unconfigured", message: "tls: unconfigured" }),
-};
-
 const cwd = mkdtempSync(join(tmpdir(), "poo-pi-proxy-audit-"));
+const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
 const cleanups = [];
 
 try {
@@ -37,7 +34,7 @@ try {
   cleanups.push(() => upstream.close());
 
   const state = createProxyState();
-  await startProxyServer(state, unloadedTls, cwd);
+  await startProxyServer(state, cwd);
   cleanups.push(() => stopProxyServer(state));
   assert(state.port !== undefined, "proxy server did not bind a port");
   state.routes.set("echo", {
@@ -95,8 +92,8 @@ try {
   assert(largeRecord.request.bodyTail.includes("END"), "large audit body tail missing");
   assert(largeRecord.request.body === undefined, "large audit file should not store a prefix body");
 
-  // The /core-settings UI flips redaction through a cwd-derived audit dir (no proxy
-  // state needed), persisting to core-settings.json and reading back the same way.
+  // The /core-settings UI flips redaction through an audit-dir adapter (no proxy
+  // state needed), persisting to centralized core settings and reading back the same way.
   const cwdAuditDir = auditPaths(cwd).dir;
   await writeRedactionMode(cwdAuditDir, "on");
   assert(
@@ -113,6 +110,8 @@ try {
       // best-effort teardown
     }
   }
+  if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+  else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
   rmSync(cwd, { recursive: true, force: true });
 }
 

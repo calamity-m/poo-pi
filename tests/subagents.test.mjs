@@ -77,17 +77,14 @@ test("resolveSubagentModel handles globally configured fast/high tiers", async (
   }
 });
 
-test("resolveSubagentModel ignores project-local subagent tiers", async () => {
+test("resolveSubagentModel reads centralized subagent tiers", async () => {
   const cwd = await mkdtemp(join(tmpdir(), "poo-pi-subagents-"));
   const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
   try {
     process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
     await writeCoreSettings(cwd, {
       version: 1,
-      subagents: { fast: { model: "test/high", thinkingLevel: "high" } },
-    });
-    await writeGlobalCoreSubagentSettings({
-      fast: { model: "test/fast", thinkingLevel: "off" },
+      subagents: { fast: { model: "test/fast", thinkingLevel: "off" } },
     });
 
     const selection = await __subagentsForTest.resolveSubagentModel(

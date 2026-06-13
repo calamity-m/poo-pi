@@ -13,7 +13,6 @@ import { registerProxy } from "./extensions/proxy/index.ts";
 import { registerCoreSettings } from "./extensions/settings.ts";
 import { registerSkills } from "./extensions/skills/index.ts";
 import { registerSubagents } from "./extensions/subagents/index.ts";
-import { registerTls } from "./extensions/tls/index.ts";
 import {
   registerAddGitWorktree,
   registerWorktree,
@@ -24,7 +23,6 @@ import {
  * Loads the core extension bundle without enabling any core capabilities yet.
  */
 export default function core(pi: ExtensionAPI) {
-  const tls = registerTls(pi);
   registerClear(pi);
   registerContext(pi);
   registerCoreHeader(pi);
@@ -33,14 +31,12 @@ export default function core(pi: ExtensionAPI) {
   registerInterview(pi);
   registerPrompt(pi);
   registerSkills(pi);
-  // TLS resolves during session_start; the proxy reads it lazily per request and attaches the
-  // client cert when loaded, forwarding without it otherwise (never blocks traffic).
-  const proxy = registerProxy(pi, { tlsProvider: tls });
+  const proxy = registerProxy(pi);
   const subagents = registerSubagents(pi, { proxy });
   registerWorktree(pi);
   registerWorktreeContext(pi);
   registerAddGitWorktree(pi);
   const permissions = registerPermissions(pi);
-  const footer = registerCoreFooter(pi, { permissions, tls, proxy, subagents });
-  registerCoreSettings(pi, { permissions, tls, footer });
+  const footer = registerCoreFooter(pi, { permissions, proxy, subagents });
+  registerCoreSettings(pi, { permissions, footer });
 }

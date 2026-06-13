@@ -120,11 +120,10 @@ history-search.ts -> `/history` (F8) search over prior user messages.
 interview/        -> `interview_user` tool: structured multi-question TUI.
 permissions/      -> Tool-call policy engine and `/permissions` modes.
 prompt.ts         -> `/prompt` template picker with variable filling.
-proxy/            -> Auditing HTTP/TLS proxy and its command surface.
+proxy/            -> Auditing HTTP/HTTPS proxy and its command surface.
 settings.ts       -> `/core-settings` UI over `.pi/core-settings.json`.
 skills/           -> Skill discovery, stats, and picker panel.
 subagents/        -> `spawn_subagent` tool and bundled preset agents.
-tls/              -> Client TLS setup (`/tls-setup`) and persistence.
 worktree/         -> `/worktree` listing and linked-worktree footer/context.
 ```
 

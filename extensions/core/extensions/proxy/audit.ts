@@ -71,7 +71,7 @@ export async function readRedactionMode(auditDir: string): Promise<RedactionMode
   return readCoreProxyRedactionMode(auditDir);
 }
 
-/** Persist the redaction mode for subsequent requests in unified core settings. */
+/** Persist the redaction mode for subsequent requests in centralized core settings. */
 export async function writeRedactionMode(auditDir: string, mode: RedactionMode): Promise<void> {
   await writeCoreProxyRedactionMode(auditDir, mode);
 }

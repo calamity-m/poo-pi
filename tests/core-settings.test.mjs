@@ -12,11 +12,26 @@ import {
   validateWorktreeSection,
   writeCoreSettings,
 } from "../extensions/core/config/persistence.ts";
+import { coreSettingsPath } from "../extensions/core/config/paths.ts";
 
 const validSubagents = {
   fast: { model: "anthropic/claude-haiku", thinkingLevel: "off" },
   high: { model: "anthropic/claude-opus", thinkingLevel: "high" },
 };
+
+/** Run a persistence assertion against an isolated Pi agent directory. */
+async function withTempAgentDir(fn) {
+  const cwd = await mkdtemp(join(tmpdir(), "poo-pi-settings-"));
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = join(cwd, "agent");
+  try {
+    await fn(cwd);
+  } finally {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+    await rm(cwd, { recursive: true, force: true });
+  }
+}
 
 test("parseCoreSettings retains valid subagent mappings", () => {
   assert.deepEqual(
@@ -99,9 +114,14 @@ test("validateWorktreeSection rejects non-objects and empty roots", () => {
   assert.match(validateWorktreeSection({ root: 5 }), /worktrees.root/);
 });
 
+test("core settings path uses the package namespace under the agent dir", async () => {
+  await withTempAgentDir(async (cwd) => {
+    assert.equal(coreSettingsPath(cwd), join(cwd, "agent", "poo", "core-settings.json"));
+  });
+});
+
 test("worktrees survive a write round trip with other settings", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "poo-pi-settings-"));
-  try {
+  await withTempAgentDir(async (cwd) => {
     await writeCoreSettings(cwd, {
       version: 1,
       worktrees: { root: "/tmp/managed-worktrees" },
@@ -110,14 +130,11 @@ test("worktrees survive a write round trip with other settings", async () => {
     const settings = await readCoreSettings(cwd);
     assert.deepEqual(settings.worktrees, { root: "/tmp/managed-worktrees" });
     assert.deepEqual(settings.footer, { enabled: true });
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
+  });
 });
 
 test("subagents survive a write round trip with other settings", async () => {
-  const cwd = await mkdtemp(join(tmpdir(), "poo-pi-settings-"));
-  try {
+  await withTempAgentDir(async (cwd) => {
     await writeCoreSettings(cwd, {
       version: 1,
       proxy: { audit: { redact: "off" } },
@@ -128,7 +145,5 @@ test("subagents survive a write round trip with other settings", async () => {
     assert.deepEqual(settings.subagents, validSubagents);
     assert.deepEqual(settings.proxy, { audit: { redact: "off" } });
     assert.deepEqual(settings.footer, { enabled: false, template: "{model}" });
-  } finally {
-    await rm(cwd, { recursive: true, force: true });
-  }
+  });
 });

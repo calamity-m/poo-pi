@@ -16,7 +16,6 @@
     "prompts/",
     "themes/",
     "docs/",
-    "test-fixtures/tls/README.md",
     "README.md",
     "LICENSE"
   ],
@@ -29,10 +28,6 @@
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint .",
-    "fixtures:tls": "node tests/generate-tls-fixtures.mjs",
-    "smoke:tls-fixture": "node tests/smoke-tls-fixture.mjs",
-    "smoke:tls-consumers": "node tests/smoke-tls-consumers.mjs",
-    "smoke:proxy-mtls": "NODE_EXTRA_CA_CERTS=test-fixtures/tls/generated/ca.crt node tests/smoke-proxy-mtls.mjs",
     "smoke:proxy-audit": "node tests/smoke-proxy-audit.mjs",
     "smoke:proxy-reload": "node tests/smoke-proxy-reload.mjs",
     "smoke:permissions": "node tests/smoke-permissions.mjs",

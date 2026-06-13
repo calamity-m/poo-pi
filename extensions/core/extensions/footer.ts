@@ -16,7 +16,6 @@ import type { PermissionsController } from "./permissions/index.ts";
 import type { PermissionMode } from "./permissions/types.ts";
 import type { ProxyReadinessHandle } from "./proxy/index.ts";
 import type { SubagentsController } from "./subagents/index.ts";
-import type { ClientTlsController } from "./tls/index.ts";
 
 /** Default footer template: a continuous powerline of live core-extension state. */
 const DEFAULT_TEMPLATE = "{permissions}{project}{subagents}{context}{model}{worktree}{branch}";
@@ -42,7 +41,6 @@ const GLYPHS = {
   context: "󰘚", // gauge
   branch: "", // git branch
   worktree: "", // linked worktree
-  tls: "", // lock
   proxy: "", // globe
   status: "", // gear
 } as const;
@@ -57,8 +55,6 @@ const POWERLINE = {
 export interface CoreFooterControllers {
   /** Permissions live state controller. */
   permissions: PermissionsController;
-  /** Client TLS live state controller. */
-  tls: ClientTlsController;
   /** Provider proxy readiness/status handle. */
   proxy: ProxyReadinessHandle;
   /** Subagent live run status controller. */
@@ -198,14 +194,12 @@ function buildSegments(
     getExtensionStatuses(): ReadonlyMap<string, string>;
   },
 ): Record<string, Segment[]> {
-  const tlsStatus = controllers.tls.statusLabel();
   const proxyStatus = controllers.proxy.statusLabel();
   const subagentStatus = controllers.subagents.statusLabel();
   const worktree = resolveLinkedWorktree(ctx.cwd);
 
   return {
     permissions: [permissionsSegment(controllers.permissions.getMode())],
-    tls: [statusSegment(GLYPHS.tls, "tls", tlsStatus)],
     proxy: [statusSegment(GLYPHS.proxy, "proxy", proxyStatus.replace(/^proxy:/, ""))],
     project: [
       {

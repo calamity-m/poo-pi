@@ -6,17 +6,7 @@ import test from "node:test";
 
 const repoRoot = resolve(import.meta.dirname, "..");
 const scriptsDir = resolve(import.meta.dirname);
-const generatedCa = join(repoRoot, "test-fixtures", "tls", "generated", "ca.crt");
-
 const smokeScripts = [
-  { name: "smoke-tls-fixture", script: "smoke-tls-fixture.mjs", timeoutMs: 10_000 },
-  { name: "smoke-tls-consumers", script: "smoke-tls-consumers.mjs", timeoutMs: 10_000 },
-  {
-    name: "smoke-proxy-mtls",
-    script: "smoke-proxy-mtls.mjs",
-    timeoutMs: 60_000,
-    env: { NODE_EXTRA_CA_CERTS: generatedCa },
-  },
   { name: "smoke-proxy-audit", script: "smoke-proxy-audit.mjs", timeoutMs: 30_000 },
   { name: "smoke-proxy-reload", script: "smoke-proxy-reload.mjs", timeoutMs: 10_000 },
   { name: "smoke-permissions", script: "smoke-permissions.mjs", timeoutMs: 60_000 },
@@ -27,8 +17,6 @@ const smokeScripts = [
  */
 test("smoke scripts", async (t) => {
   await assertSmokeScriptInventory();
-  await runScript("generate TLS fixtures", "generate-tls-fixtures.mjs", { timeoutMs: 10_000 });
-
   for (const smoke of smokeScripts) {
     await t.test(smoke.name, async () => {
       await runScript(smoke.name, smoke.script, smoke);
@@ -98,7 +86,7 @@ async function runScript(name, script, { env = {}, timeoutMs = 30_000 } = {}) {
 }
 
 /**
- * Build a subprocess environment with proxy/TLS settings cleared by default.
+ * Build a subprocess environment with proxy settings cleared by default.
  *
  * @param {Record<string, string>} overrides Scenario-specific environment values.
  * @returns {NodeJS.ProcessEnv} Environment for a smoke subprocess.

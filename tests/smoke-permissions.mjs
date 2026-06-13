@@ -6,7 +6,7 @@
 //
 // Does NOT require a running Pi process or filesystem interaction beyond a tmpdir.
 
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -433,7 +433,6 @@ console.log("\n6. persistence (read/write/compile)");
   const tmpAgentDir = mkdtempSync(join(tmpdir(), "poo-pi-agent-"));
   const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
   process.env.PI_CODING_AGENT_DIR = tmpAgentDir;
-  mkdirSync(join(tmpDir, ".pi"));
 
   try {
     // Read non-existent → built-in defaults
@@ -441,13 +440,13 @@ console.log("\n6. persistence (read/write/compile)");
     assertEqual(defaults.mode, "trusted", "missing config → default mode 'trusted'");
     assertEqual(defaults.rules.length, 0, "missing config → empty rules");
 
-    // User-scoped default mode applies only when no project config exists.
+    // Central default mode applies after it is written.
     await writeDefaultPermissionMode("permissive");
     const globalDefault = await readPermissionState(tmpDir);
-    assertEqual(globalDefault.mode, "permissive", "missing project config → user default mode");
+    assertEqual(globalDefault.mode, "permissive", "central config → configured default mode");
     assertEqual(
       defaultConfigFilePath(),
-      join(tmpAgentDir, "core-settings.json"),
+      join(tmpAgentDir, "poo", "core-settings.json"),
       "default path honors PI_CODING_AGENT_DIR",
     );
 
@@ -468,10 +467,10 @@ console.log("\n6. persistence (read/write/compile)");
     assertEqual(read.remembered.length, 1, "persisted grant round-trips");
     assertEqual(read.remembered[0].dirPrefix, "/project/src", "persisted grant dirPrefix");
 
-    // Malformed unified JSON → user default when available
-    writeFileSync(join(tmpDir, ".pi", "core-settings.json"), "{ bad json");
+    // Malformed centralized JSON → built-in defaults.
+    writeFileSync(join(tmpAgentDir, "poo", "core-settings.json"), "{ bad json");
     const fallback = await readPermissionState(tmpDir);
-    assertEqual(fallback.mode, "permissive", "malformed core settings JSON → user default mode");
+    assertEqual(fallback.mode, "trusted", "malformed core settings JSON → built-in default mode");
 
     // Invalid regex in rule → dropped with warning
     const withBadRegex = parseAndCompile({

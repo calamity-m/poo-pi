@@ -34,7 +34,7 @@ export interface PermissionsController {
  * in the same Node process so the active mode and grants survive `/reload` and `/new`.
  *
  * The inner `state` field starts as a placeholder; `reloadState` is called on
- * `session_start` to load the real config from `.pi/core-settings.json`.
+ * `session_start` to load the real config from `~/.pi/agent/poo/core-settings.json`.
  */
 function getPermissionsGlobal(): { state: PermissionState; notifiedRef: [boolean] } {
   const scope = globalThis as typeof globalThis & {
@@ -50,7 +50,7 @@ function getPermissionsGlobal(): { state: PermissionState; notifiedRef: [boolean
 /**
  * Register the core permissions extension.
  *
- * - Loads persisted mode + rules from `.pi/core-settings.json` on `session_start`.
+ * - Loads persisted mode + rules from `~/.pi/agent/poo/core-settings.json` on `session_start`.
  * - Adds a `tool_call` hook that gates every tool through the policy engine.
  * - Registers the `/permissions` operator command (mode picker + showcase + editor).
  *

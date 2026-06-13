@@ -284,12 +284,19 @@ test("validateModeFields enforces the mode field matrix", () => {
 
 // ── add_git_worktree integration ────────────────────────────────────────────
 
-function writeManagedRoot(repo, root) {
-  mkdirSync(join(repo, ".pi"), { recursive: true });
+function configureManagedRoot(repo, root) {
+  const previousAgentDir = process.env.PI_CODING_AGENT_DIR;
+  const agentDir = join(repo, "agent");
+  process.env.PI_CODING_AGENT_DIR = agentDir;
+  mkdirSync(join(agentDir, "poo"), { recursive: true });
   writeFileSync(
-    join(repo, ".pi", "core-settings.json"),
+    join(agentDir, "poo", "core-settings.json"),
     JSON.stringify({ version: 1, worktrees: { root } }),
   );
+  return () => {
+    if (previousAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = previousAgentDir;
+  };
 }
 
 function branchOf(dir) {
@@ -299,10 +306,11 @@ function branchOf(dir) {
 test("createManagedWorktree creates an existing-branch worktree under the managed root", async () => {
   const repo = tmp();
   const root = tmp();
+  let restoreAgentDir = () => {};
   try {
     initRepo(repo);
     git(repo, ["branch", "feature"]);
-    writeManagedRoot(repo, root);
+    restoreAgentDir = configureManagedRoot(repo, root);
 
     const result = await createManagedWorktree(
       { mode: "existing_branch", branch: "feature" },
@@ -314,6 +322,7 @@ test("createManagedWorktree creates an existing-branch worktree under the manage
     assert.equal(result.branch, "feature");
     assert.equal(branchOf(result.destination), "feature");
   } finally {
+    restoreAgentDir();
     rmSync(repo, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
@@ -322,9 +331,10 @@ test("createManagedWorktree creates an existing-branch worktree under the manage
 test("createManagedWorktree creates a detached worktree", async () => {
   const repo = tmp();
   const root = tmp();
+  let restoreAgentDir = () => {};
   try {
     initRepo(repo);
-    writeManagedRoot(repo, root);
+    restoreAgentDir = configureManagedRoot(repo, root);
 
     const result = await createManagedWorktree(
       { mode: "detached", ref: "HEAD", label: "det" },
@@ -335,6 +345,7 @@ test("createManagedWorktree creates a detached worktree", async () => {
     assert.ok(isUnderManagedRoot(result.destination, root));
     assert.equal(branchOf(result.destination), "HEAD");
   } finally {
+    restoreAgentDir();
     rmSync(repo, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
@@ -343,9 +354,10 @@ test("createManagedWorktree creates a detached worktree", async () => {
 test("createManagedWorktree creates a new branch from a start point", async () => {
   const repo = tmp();
   const root = tmp();
+  let restoreAgentDir = () => {};
   try {
     initRepo(repo);
-    writeManagedRoot(repo, root);
+    restoreAgentDir = configureManagedRoot(repo, root);
 
     const result = await createManagedWorktree(
       { mode: "new_branch", branchName: "fresh", startPoint: "main" },
@@ -355,6 +367,7 @@ test("createManagedWorktree creates a new branch from a start point", async () =
     assert.equal(result.branch, "fresh");
     assert.equal(branchOf(result.destination), "fresh");
   } finally {
+    restoreAgentDir();
     rmSync(repo, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
@@ -374,14 +387,16 @@ test("createManagedWorktree rejects a non-Git source", async () => {
 
 test("createManagedWorktree rejects a managed root inside the repository", async () => {
   const repo = tmp();
+  let restoreAgentDir = () => {};
   try {
     initRepo(repo);
-    writeManagedRoot(repo, join(repo, "wt"));
+    restoreAgentDir = configureManagedRoot(repo, join(repo, "wt"));
     await assert.rejects(
       createManagedWorktree({ mode: "detached", ref: "HEAD" }, repo, undefined),
       /inside the source repository/,
     );
   } finally {
+    restoreAgentDir();
     rmSync(repo, { recursive: true, force: true });
   }
 });
@@ -389,14 +404,16 @@ test("createManagedWorktree rejects a managed root inside the repository", async
 test("createManagedWorktree rejects an unknown local branch", async () => {
   const repo = tmp();
   const root = tmp();
+  let restoreAgentDir = () => {};
   try {
     initRepo(repo);
-    writeManagedRoot(repo, root);
+    restoreAgentDir = configureManagedRoot(repo, root);
     await assert.rejects(
       createManagedWorktree({ mode: "existing_branch", branch: "ghost" }, repo, undefined),
       /does not exist/,
     );
   } finally {
+    restoreAgentDir();
     rmSync(repo, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }
@@ -405,14 +422,16 @@ test("createManagedWorktree rejects an unknown local branch", async () => {
 test("createManagedWorktree rejects an invalid mode/field combination", async () => {
   const repo = tmp();
   const root = tmp();
+  let restoreAgentDir = () => {};
   try {
     initRepo(repo);
-    writeManagedRoot(repo, root);
+    restoreAgentDir = configureManagedRoot(repo, root);
     await assert.rejects(
       createManagedWorktree({ mode: "detached", ref: "HEAD", branch: "main" }, repo, undefined),
       /must not set "branch"/,
     );
   } finally {
+    restoreAgentDir();
     rmSync(repo, { recursive: true, force: true });
     rmSync(root, { recursive: true, force: true });
   }

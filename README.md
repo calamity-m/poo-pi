@@ -78,7 +78,7 @@ Run only the smoke harness:
 npm run test:smoke
 ```
 
-The smoke harness regenerates TLS fixtures before running TLS-dependent checks. The targeted `npm run smoke:*` commands are still available for debugging individual scenarios; on a clean checkout, run `npm run fixtures:tls` first for TLS-dependent smoke commands.
+The targeted `npm run smoke:*` commands are available for debugging individual smoke scenarios.
 
 ## Validate
 

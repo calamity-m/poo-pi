@@ -3,10 +3,7 @@ import type { ExtensionAPI, ExtensionContext } from "@earendil-works/pi-coding-a
 import { registerProxyCommand } from "./command.ts";
 import { applyProviderOverrides } from "./routes.ts";
 import { startProxyServer, stopProxyServer } from "./server.ts";
-import { createProxyState, type ProxyState, type RegisterProxyOptions } from "./types.ts";
-
-export type { RegisterProxyOptions } from "./types.ts";
-export { resolveProxyClientTls } from "./tls.ts";
+import { createProxyState, type ProxyState } from "./types.ts";
 
 /** On-demand proxy readiness hook shared with nested-session callers. */
 export interface ProxyReadinessHandle {
@@ -36,23 +33,18 @@ function getProxyState(): ProxyState {
 
 /**
  * Register the provider reverse proxy: start the loopback server, re-register
- * providers through it, originate mTLS on the upstream leg when a client
- * certificate is loaded, audit each request, and expose the `/proxy`
- * operator command.
+ * providers through it, audit each request, and expose the `/proxy` operator
+ * command.
  *
  * The server starts before any base-URL overrides are applied, and overrides
  * are skipped entirely when it fails to start so providers are never stranded
  * pointing at a dead `127.0.0.1`.
  */
-export function registerProxy(
-  pi: ExtensionAPI,
-  options: RegisterProxyOptions,
-): ProxyReadinessHandle {
+export function registerProxy(pi: ExtensionAPI): ProxyReadinessHandle {
   const state = getProxyState();
-  const { tlsProvider } = options;
 
   const ensure = async (ctx: ExtensionContext): Promise<void> => {
-    await startProxyServer(state, tlsProvider, ctx.cwd);
+    await startProxyServer(state, ctx.cwd);
     await applyProviderOverrides(pi, ctx, state);
     ctx.ui.setStatus("proxy", formatProxyStatusLabel(state));
   };

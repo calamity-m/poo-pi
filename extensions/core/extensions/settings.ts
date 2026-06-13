@@ -5,14 +5,12 @@ import { type SettingItem, SettingsList, parseKey } from "@earendil-works/pi-tui
 
 import { coreSettingsPath, globalCoreSettingsPath } from "../config/paths.ts";
 import {
-  readCoreClientTlsSkip,
   readCoreHistorySearchSettings,
   readCoreProxyRedactionMode,
   readCoreSettings,
   readCoreWorktreeSettings,
   readGlobalCoreSubagentSettings,
   validateCoreSettings,
-  writeCoreClientTlsSkip,
   writeCoreHistorySearchSettings,
   writeCoreSettings,
   writeCoreWorktreeSettings,
@@ -25,14 +23,11 @@ import type { PermissionMode } from "./permissions/types.ts";
 import { auditPaths, writeRedactionMode } from "./proxy/audit.ts";
 import { PanelChrome, showInlinePanel } from "../lib/ui/panel.ts";
 import type { RedactionMode } from "./proxy/types.ts";
-import type { ClientTlsController } from "./tls/index.ts";
 
 /** Live controllers the settings UI routes simple changes and configure actions through. */
 export interface CoreSettingsControllers {
   /** Permissions live state controller (mode + validated config editor). */
   permissions: PermissionsController;
-  /** Client TLS controller (secret-safe setup flow + redacted status). */
-  tls: ClientTlsController;
   /** Footer live state controller (enabled flag + template). */
   footer: CoreFooterController;
 }
@@ -65,7 +60,7 @@ type SelectorResult = { kind: "close" } | { kind: "action"; id: string };
  */
 export function registerCoreSettings(pi: ExtensionAPI, controllers: CoreSettingsControllers): void {
   pi.registerCommand("core-settings", {
-    description: "View or edit poo-pi core settings stored in .pi/core-settings.json",
+    description: "View or edit poo-pi core settings stored in ~/.pi/agent/poo/core-settings.json",
     handler: async (args, ctx) => {
       const sub = args.trim();
       if (sub === "show") {
@@ -113,7 +108,7 @@ async function editSettings(ctx: ExtensionCommandContext): Promise<void> {
   }
 
   const prefill = `${JSON.stringify(await readCoreSettings(ctx.cwd), null, 2)}\n`;
-  const edited = await ctx.ui.editor("Edit core settings (.pi/core-settings.json)", prefill);
+  const edited = await ctx.ui.editor("Edit core settings (poo/core-settings.json)", prefill);
   if (edited === undefined) return;
 
   let parsed: unknown;
@@ -144,8 +139,8 @@ async function editSettings(ctx: ExtensionCommandContext): Promise<void> {
  *
  * NOTE: permission-mode live-apply is interactive-only — headless sessions run
  * `open` regardless of the persisted mode, so the chosen mode is not globally
- * enforced. Permission rules and TLS targets remain editable only through the
- * permissions editor, TLS setup, or raw JSON, not as inline rows.
+ * enforced. Permission rules remain editable only through the permissions
+ * editor or raw JSON, not as inline rows.
  */
 async function openCoreSettingsSelector(
   ctx: ExtensionCommandContext,
@@ -153,7 +148,6 @@ async function openCoreSettingsSelector(
 ): Promise<void> {
   for (;;) {
     const redaction = await readCoreProxyRedactionMode(auditPaths(ctx.cwd).dir);
-    const tlsSkipped = await readCoreClientTlsSkip(ctx.cwd);
     const subagents = await readGlobalCoreSubagentSettings();
     const historySearch = await readCoreHistorySearchSettings(ctx.cwd);
     const worktrees = await readCoreWorktreeSettings(ctx.cwd);
@@ -180,21 +174,6 @@ async function openCoreSettingsSelector(
           label: "Proxy audit redaction",
           description: "Mask sensitive headers in audit records for future proxy requests.",
           currentValue: redaction,
-          values: ["on", "off"],
-        },
-        actionItem(
-          "tls",
-          "Client TLS",
-          tlsSkipped ? "skipped" : controllers.tls.statusLabel(),
-          "Configure the mTLS client certificate via the secret-safe setup flow.",
-          done,
-        ),
-        {
-          id: "tls-skip",
-          label: "Skip client TLS",
-          description:
-            "Skip mTLS setup at startup — no prompt, no client cert. Applies next startup.",
-          currentValue: tlsSkipped ? "on" : "off",
           values: ["on", "off"],
         },
         actionItem(
@@ -243,7 +222,7 @@ async function openCoreSettingsSelector(
           "json-edit",
           "Core settings JSON",
           "edit",
-          "Edit the raw .pi/core-settings.json for advanced changes.",
+          "Edit the raw ~/.pi/agent/poo/core-settings.json for advanced changes.",
           done,
         ),
       ];
@@ -318,16 +297,6 @@ async function applyChange(
     );
     return;
   }
-  if (id === "tls-skip") {
-    await writeCoreClientTlsSkip(ctx.cwd, value === "on");
-    ctx.ui.notify(
-      value === "on"
-        ? "tls: skip enabled — no client cert on next startup"
-        : "tls: skip disabled — setup runs on next startup",
-      "info",
-    );
-    return;
-  }
   if (id === "footer-enabled") {
     await controllers.footer.setEnabled(ctx, value === "on");
     ctx.ui.notify(value === "on" ? "footer: enabled" : "footer: disabled", "info");
@@ -342,10 +311,6 @@ async function runAction(
 ): Promise<void> {
   if (id === "permissions-config") {
     await controllers.permissions.editConfig(ctx);
-    return;
-  }
-  if (id === "tls") {
-    await controllers.tls.configure(ctx);
     return;
   }
   if (id === "history-search-shortcut") {
@@ -553,7 +518,7 @@ function findShortcutConflicts(
   return conflicts;
 }
 
-/** Prompt for one subagent tier mapping and persist it through the global settings file. */
+/** Prompt for one subagent tier mapping and persist it through centralized settings. */
 async function configureSubagentTier(
   ctx: ExtensionCommandContext,
   tier: "fast" | "high",
@@ -605,10 +570,7 @@ async function configureSubagentTier(
     return;
   }
   await writeGlobalCoreSubagentSettings(next);
-  ctx.ui.notify(
-    `[core-settings] global subagent ${tier} updated (${globalCoreSettingsPath()})`,
-    "info",
-  );
+  ctx.ui.notify(`[core-settings] subagent ${tier} updated (${globalCoreSettingsPath()})`, "info");
 }
 
 /** Return whether a selected UI string is a supported persisted thinking level. */

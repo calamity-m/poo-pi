@@ -30,7 +30,7 @@ type PermissionPickerResult =
  * - No args / unknown arg: open mode picker then show showcase.
  * - `safe`, `trusted`, `permissive`, `open`: set mode directly and show showcase.
  * - `edit`: open raw-JSON editor; validate before writing.
- * - `default [mode]`: save the user-scoped default mode for new projects.
+ * - `default [mode]`: save the central default mode.
  *
  * The showcase content is derived from the policy engine's own constants so it
  * cannot drift from actual enforcement behavior.
@@ -81,7 +81,7 @@ function isPermissionMode(value: string): value is PermissionMode {
   return value === "safe" || value === "trusted" || value === "permissive" || value === "open";
 }
 
-/** Pick a project mode, with `d` saving the highlighted mode as the user default. */
+/** Pick a mode, with `d` saving the highlighted mode as the central default. */
 async function pickPermissionMode(
   ctx: ExtensionCommandContext,
   state: PermissionState,
@@ -102,7 +102,7 @@ async function pickPermissionMode(
       value: mode,
       description: formatModeDescription(mode, state.mode, defaultMode),
     })),
-    footer: "↑↓ navigate • Enter set project mode • d save selected as default • Esc close",
+    footer: "↑↓ navigate • Enter set mode • d save selected as default • Esc close",
     onSelect: (item) => ({ kind: "mode", mode: item.value as PermissionMode }),
     onKey: (data, item) => {
       if (data !== "d") return undefined;
@@ -129,20 +129,16 @@ function formatModeDescription(
   currentMode: PermissionMode,
   defaultMode: PermissionMode,
 ): string | undefined {
-  if (mode === defaultMode && mode === currentMode)
-    return "Default for new projects and active project mode";
-  if (mode === defaultMode) return "Default for new projects";
-  if (mode === currentMode) return "Active project mode";
+  if (mode === defaultMode && mode === currentMode) return "Central default and active mode";
+  if (mode === defaultMode) return "Central default mode";
+  if (mode === currentMode) return "Active mode";
   return undefined;
 }
 
-/** Save the user-scoped default mode used by projects without local permissions config. */
+/** Save the central default mode without changing rules or remembered grants. */
 async function saveDefaultMode(ctx: ExtensionCommandContext, mode: PermissionMode): Promise<void> {
   await writeDefaultPermissionMode(mode);
-  ctx.ui.notify(
-    `permissions: default mode for new projects set to ${mode} (${defaultConfigFilePath()})`,
-    "info",
-  );
+  ctx.ui.notify(`permissions: default mode set to ${mode} (${defaultConfigFilePath()})`, "info");
 }
 
 /** Apply a new mode: update process-global state, persist, and show showcase. */
@@ -201,7 +197,7 @@ export async function editPermissionConfig(
     2,
   );
 
-  const edited = await ctx.ui.editor("Edit permissions config (.pi/core-settings.json)", prefill);
+  const edited = await ctx.ui.editor("Edit permissions config (poo/core-settings.json)", prefill);
   if (edited === undefined) return; // cancelled
 
   let parsed: unknown;

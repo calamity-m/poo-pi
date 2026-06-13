@@ -25,18 +25,18 @@ const DEFAULTS: PermissionState = {
   remembered: [],
 };
 
-/** Return the absolute path to the project-local core settings config file. */
+/** Return the absolute path to the centralized core settings config file. */
 export function configFilePath(cwd: string): string {
   return coreSettingsPath(cwd);
 }
 
-/** Return the absolute path to the user-scoped core settings defaults file. */
+/** Return the absolute path to the centralized core settings defaults file. */
 export function defaultConfigFilePath(): string {
   return globalCoreSettingsPath();
 }
 
 /**
- * Read permissions from `.pi/core-settings.json` and return compiled in-memory state.
+ * Read permissions from centralized core settings and return compiled in-memory state.
  * Invalid regex patterns are dropped with a console warning rather than crashing.
  */
 export async function readPermissionState(cwd: string): Promise<PermissionState> {
@@ -47,18 +47,23 @@ export async function readPermissionState(cwd: string): Promise<PermissionState>
   return { ...DEFAULTS, mode: defaultMode, rules: [], remembered: [] };
 }
 
-/** Read the effective default mode used when a project has no permissions config. */
+/** Read the effective default mode from centralized core settings. */
 export async function readDefaultPermissionMode(): Promise<PermissionMode> {
   return (await readGlobalCorePermissionConfig())?.mode ?? DEFAULTS.mode;
 }
 
-/** Persist the user-scoped default mode used when a project has no permissions config. */
+/** Persist the default mode without discarding centralized rules or remembered grants. */
 export async function writeDefaultPermissionMode(mode: PermissionMode): Promise<void> {
-  await writeGlobalCorePermissionConfig({ mode, rules: [], remembered: [] });
+  const existing = await readGlobalCorePermissionConfig();
+  await writeGlobalCorePermissionConfig({
+    mode,
+    rules: existing?.rules ?? [],
+    remembered: existing?.remembered ?? [],
+  });
 }
 
 /**
- * Persist the current permission state into `.pi/core-settings.json`.
+ * Persist the current permission state into centralized core settings.
  * Only serializes the raw `mode`, `rules`, and `remembered` arrays
  * (not the compiled regexes).
  */
