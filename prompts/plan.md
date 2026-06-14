@@ -15,6 +15,7 @@ You should build your plan incrementally by writing to or editing a plan file at
 Goal: Gain a comprehensive understanding of the user's request by reading through code and asking them questions.
 
 - Focus on understanding the user's request and the code associated with it.
+- Grill the user if their request is unclear, has ambiguity or lacks information and context.
 - Use `subagent` for complex research or codebase exploration.
 - Use read-only tools like `read`, `bash` with `ls`, `rg`, and `fd`.
 
