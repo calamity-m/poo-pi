@@ -6,7 +6,7 @@ import {
   registerDebugSystemPrompt,
 } from "../extensions/debug/index.ts";
 
-test("/debug-system-prompt opens an overlay popup when UI is available", async () => {
+test("/debug-system-prompt opens inline custom UI when UI is available", async () => {
   let handler;
   registerDebugSystemPrompt({
     on: () => {},
@@ -33,7 +33,7 @@ test("/debug-system-prompt opens an overlay popup when UI is available", async (
   });
 
   assert.equal(customCalls.length, 1);
-  assert.equal(customCalls[0].overlay, true);
+  assert.equal(customCalls[0], undefined);
 });
 
 test("debug report includes system prompt, additions, tool definitions, and token summary", () => {
@@ -69,6 +69,48 @@ test("debug report includes system prompt, additions, tool definitions, and toke
   assert.match(output, /### custom/);
   assert.match(output, /Estimated prompt contributors/);
   assert.match(output, /Context usage: 120\/1\.0k tokens \(12%\)/);
+});
+
+test("literal payload section includes prompt and only active tool definitions", () => {
+  const report = __debugSystemPromptForTest.buildDebugSystemPromptReport(
+    {
+      getActiveTools: () => ["read"],
+      getAllTools: () => [
+        tool("read", { source: "builtin" }),
+        tool("inactive", { source: "extension" }),
+      ],
+    },
+    {
+      model: undefined,
+      getContextUsage: () => undefined,
+      getSystemPrompt: () => "literal assembled prompt",
+      getSystemPromptOptions: () => ({ cwd: "/repo" }),
+    },
+  );
+
+  const output = __debugSystemPromptForTest
+    .formatDebugSection(report, "literal-payload")
+    .join("\n");
+  assert.match(output, /literal assembled prompt/);
+  assert.match(output, /active tool definitions/);
+  assert.match(output, /"name": "read"/);
+  assert.doesNotMatch(output, /"name": "inactive"/);
+});
+
+test("debug section menu emphasizes literal payload access", () => {
+  const report = __debugSystemPromptForTest.buildDebugSystemPromptReport(
+    { getActiveTools: () => ["read"], getAllTools: () => [tool("read")] },
+    {
+      model: { provider: "test", id: "model" },
+      getContextUsage: () => undefined,
+      getSystemPrompt: () => "assembled prompt",
+      getSystemPromptOptions: () => ({ cwd: "/repo" }),
+    },
+  );
+
+  const items = __debugSystemPromptForTest.debugSectionItems(report);
+  assert.equal(items[1].value, "literal-payload");
+  assert.match(items[1].description, /system prompt plus active tool definitions/);
 });
 
 test("debug report can use the last turn prompt snapshot when it differs from command context", () => {

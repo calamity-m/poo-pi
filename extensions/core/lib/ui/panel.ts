@@ -34,19 +34,45 @@ export async function showNavigablePanel(
   title: string,
   lines: string[],
 ): Promise<PanelNavigationResult> {
-  return await ctx.ui.custom<PanelNavigationResult>(
-    (tui, theme, keybindings, done) =>
-      new TextPanel(
-        theme,
-        keybindings,
-        () => tui.requestRender(),
-        () => done("close"),
-        title,
-        lines,
-        () => done("back"),
-      ),
-    { overlay: true, overlayOptions: { width: "80%", minWidth: 48, maxHeight: 24 } },
-  );
+  return await showNavigablePanelWithPlacement(ctx, title, lines, true);
+}
+
+/** Show a navigable text panel inline in the prompt area. */
+export async function showInlineNavigablePanel(
+  ctx: ExtensionContext,
+  title: string,
+  lines: string[],
+): Promise<PanelNavigationResult> {
+  return await showNavigablePanelWithPlacement(ctx, title, lines, false);
+}
+
+/** Show a navigable text panel either inline or as an overlay. */
+async function showNavigablePanelWithPlacement(
+  ctx: ExtensionContext,
+  title: string,
+  lines: string[],
+  overlay: boolean,
+): Promise<PanelNavigationResult> {
+  const factory = (
+    tui: { requestRender(): void },
+    theme: PanelTheme,
+    keybindings: KeybindingsManager,
+    done: (result: PanelNavigationResult) => void,
+  ) =>
+    new TextPanel(
+      theme,
+      keybindings,
+      () => tui.requestRender(),
+      () => done("close"),
+      title,
+      lines,
+      () => done("back"),
+    );
+  if (!overlay) return await ctx.ui.custom<PanelNavigationResult>(factory);
+  return await ctx.ui.custom<PanelNavigationResult>(factory, {
+    overlay: true,
+    overlayOptions: { width: "80%", minWidth: 48, maxHeight: 24 },
+  });
 }
 
 /** Show a read-only, scrollable text panel inline in the prompt area. */
@@ -92,62 +118,89 @@ export async function showSelectPanel<T = string>(
   ctx: ExtensionContext,
   options: SelectPanelOptions<T>,
 ): Promise<T | null> {
-  return await ctx.ui.custom<T | null>(
-    (tui, theme, _keybindings, done) => {
-      const list = new SelectList(
-        options.items,
-        options.visibleItems ?? Math.min(options.items.length, 12),
-        {
-          selectedPrefix: (text: string) => theme.fg("accent", text),
-          selectedText: (text: string) => theme.bg("selectedBg", theme.fg("accent", text)),
-          description: (text: string) => theme.fg("muted", text),
-          scrollInfo: (text: string) => theme.fg("dim", text),
-          noMatch: (text: string) => theme.fg("warning", text),
-        },
-      );
-      list.onSelect = (item) =>
-        done(options.onSelect ? options.onSelect(item) : (item.value as unknown as T));
-      list.onCancel = () => done(null);
+  return await showSelectPanelWithPlacement(ctx, options, true);
+}
 
-      const container = new Container();
-      container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
-      container.addChild(new Text(theme.fg("accent", theme.bold(options.title)), 1, 1));
-      container.addChild(list);
-      container.addChild(
-        new Text(theme.fg("dim", options.footer ?? "↑↓ navigate • Enter select • Esc close"), 1, 1),
-      );
-      container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
+/** Show a select-list panel inline in the prompt area and return the selected result. */
+export async function showInlineSelectPanel<T = string>(
+  ctx: ExtensionContext,
+  options: SelectPanelOptions<T>,
+): Promise<T | null> {
+  return await showSelectPanelWithPlacement(ctx, options, false);
+}
 
-      return {
-        render: (width) => container.render(width),
-        invalidate: () => container.invalidate(),
-        handleInput: (data) => {
-          if (options.onKey) {
-            const result = options.onKey(data, list.getSelectedItem());
-            if (result !== undefined) {
-              done(result);
-              return;
-            }
-          }
-          list.handleInput(data);
-          tui.requestRender();
-        },
-      };
-    },
-    {
-      overlay: true,
-      overlayOptions: {
-        width: options.width ?? "80%",
-        minWidth: options.minWidth ?? 56,
-        maxHeight: options.maxHeight ?? 18,
+/** Show a select-list panel either inline or as an overlay. */
+async function showSelectPanelWithPlacement<T = string>(
+  ctx: ExtensionContext,
+  options: SelectPanelOptions<T>,
+  overlay: boolean,
+): Promise<T | null> {
+  const factory = (
+    tui: { requestRender(): void },
+    theme: SelectPanelTheme,
+    _keybindings: KeybindingsManager,
+    done: (result: T | null) => void,
+  ) => {
+    const list = new SelectList(
+      options.items,
+      options.visibleItems ?? Math.min(options.items.length, 12),
+      {
+        selectedPrefix: (text: string) => theme.fg("accent", text),
+        selectedText: (text: string) => theme.bg("selectedBg", theme.fg("accent", text)),
+        description: (text: string) => theme.fg("muted", text),
+        scrollInfo: (text: string) => theme.fg("dim", text),
+        noMatch: (text: string) => theme.fg("warning", text),
       },
+    );
+    list.onSelect = (item) =>
+      done(options.onSelect ? options.onSelect(item) : (item.value as unknown as T));
+    list.onCancel = () => done(null);
+
+    const container = new Container();
+    container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
+    container.addChild(new Text(theme.fg("accent", theme.bold(options.title)), 1, 1));
+    container.addChild(list);
+    container.addChild(
+      new Text(theme.fg("dim", options.footer ?? "↑↓ navigate • Enter select • Esc close"), 1, 1),
+    );
+    container.addChild(new DynamicBorder((text: string) => theme.fg("accent", text)));
+
+    return {
+      render: (width: number) => container.render(width),
+      invalidate: () => container.invalidate(),
+      handleInput: (data: string) => {
+        if (options.onKey) {
+          const result = options.onKey(data, list.getSelectedItem());
+          if (result !== undefined) {
+            done(result);
+            return;
+          }
+        }
+        list.handleInput(data);
+        tui.requestRender();
+      },
+    };
+  };
+  if (!overlay) return await ctx.ui.custom<T | null>(factory);
+  return await ctx.ui.custom<T | null>(factory, {
+    overlay: true,
+    overlayOptions: {
+      width: options.width ?? "80%",
+      minWidth: options.minWidth ?? 56,
+      maxHeight: options.maxHeight ?? 18,
     },
-  );
+  });
 }
 
 /** Minimal theme surface the panel needs for coloring its chrome. */
 export interface PanelTheme {
   fg(color: string, text: string): string;
+}
+
+/** Minimal theme surface the select panel needs for list styling. */
+interface SelectPanelTheme extends PanelTheme {
+  bg(color: string, text: string): string;
+  bold(text: string): string;
 }
 
 /** Shared panel chrome renderer for titled panels with no side borders. */

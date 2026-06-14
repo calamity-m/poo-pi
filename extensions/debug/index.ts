@@ -9,7 +9,7 @@ import type {
 import { estimateTokens } from "@earendil-works/pi-agent-core";
 
 import { formatPercent, formatTokens } from "../core/lib/format.ts";
-import { showPanel } from "../core/lib/ui/panel.ts";
+import { showInlineNavigablePanel, showInlineSelectPanel } from "../core/lib/ui/panel.ts";
 
 /** Last prompt data captured after all earlier before-agent-start handlers reached this extension. */
 interface CapturedPrompt {
@@ -91,9 +91,8 @@ export function registerDebugSystemPrompt(pi: ExtensionAPI): void {
     description: "Inspect the assembled system prompt, prompt inputs, tools, and token estimates",
     handler: async (_args, ctx) => {
       const report = buildDebugSystemPromptReport(pi, commandPromptContext(ctx), captured);
-      const lines = formatDebugSystemPromptReport(report);
-      if (ctx.hasUI) await showPanel(ctx, "debug-system-prompt", lines);
-      else console.log(lines.join("\n"));
+      if (ctx.hasUI) await showDebugSystemPromptInspector(ctx, report);
+      else console.log(formatDebugSystemPromptReport(report).join("\n"));
     },
   });
 }
@@ -164,6 +163,202 @@ function formatDebugSystemPromptReport(report: DebugSystemPromptReport): string[
   lines.push("## All tool definitions", "");
   for (const tool of report.tools) appendTool(lines, tool, report.activeTools.includes(tool.name));
   lines.push("Esc/Enter/q close");
+  return lines;
+}
+
+type DebugSection =
+  | "overview"
+  | "contributors"
+  | "literal-payload"
+  | "assembled-prompt"
+  | "structured-inputs"
+  | "active-tools"
+  | "all-tools"
+  | "full-report";
+
+/** Show a menu-driven inspector so large prompt reports can be read by intent. */
+async function showDebugSystemPromptInspector(
+  ctx: ExtensionCommandContext,
+  report: DebugSystemPromptReport,
+): Promise<void> {
+  while (true) {
+    const section = await showInlineSelectPanel<DebugSection>(ctx, {
+      title: "Debug system prompt",
+      items: debugSectionItems(report),
+      footer: "↑↓ navigate • Enter open • Esc close",
+      visibleItems: 8,
+      maxHeight: 20,
+    });
+    if (!section) return;
+
+    const result = await showInlineNavigablePanel(
+      ctx,
+      debugSectionTitle(section),
+      formatDebugSection(report, section),
+    );
+    if (result === "close") return;
+  }
+}
+
+/** Return top-level inspector sections with summaries that help users choose where to drill in. */
+function debugSectionItems(
+  report: DebugSystemPromptReport,
+): { value: DebugSection; label: string; description: string }[] {
+  const promptTokens = estimateText(report.systemPrompt);
+  const activeToolCount = report.activeTools.length;
+  const biggest = [...report.contributors].sort((a, b) => b.tokens - a.tokens)[0];
+  return [
+    {
+      value: "overview",
+      label: "Overview",
+      description: `${formatModel(report.model)} • prompt ~${formatTokens(promptTokens)} tokens • ${formatUsage(report.usage, report.model)}`,
+    },
+    {
+      value: "literal-payload",
+      label: "Literal sent payload",
+      description: "Assembled system prompt plus active tool definitions",
+    },
+    {
+      value: "contributors",
+      label: "Prompt contributors",
+      description: biggest
+        ? `Largest: ${biggest.label} (~${formatTokens(biggest.tokens)} tokens)`
+        : "No structured contributors found",
+    },
+    {
+      value: "assembled-prompt",
+      label: "Assembled prompt only",
+      description: `Exact system prompt text, ${report.systemPrompt.length} chars`,
+    },
+    {
+      value: "structured-inputs",
+      label: "Structured inputs",
+      description: "Prompt options captured before assembly",
+    },
+    {
+      value: "active-tools",
+      label: "Active tools",
+      description: `${activeToolCount} tool${activeToolCount === 1 ? "" : "s"} available to the model`,
+    },
+    {
+      value: "all-tools",
+      label: "All registered tools",
+      description: `${report.tools.length} registered tool${report.tools.length === 1 ? "" : "s"}, including inactive tools`,
+    },
+    {
+      value: "full-report",
+      label: "Full debug report",
+      description: "Complete diagnostic dump, including inactive registered tools",
+    },
+  ];
+}
+
+/** Return the human title for an inspector section. */
+function debugSectionTitle(section: DebugSection): string {
+  switch (section) {
+    case "overview":
+      return "Overview";
+    case "contributors":
+      return "Prompt contributors";
+    case "literal-payload":
+      return "Literal sent payload";
+    case "assembled-prompt":
+      return "Assembled prompt";
+    case "structured-inputs":
+      return "Structured inputs";
+    case "active-tools":
+      return "Active tools";
+    case "all-tools":
+      return "All registered tools";
+    case "full-report":
+      return "Full debug report";
+  }
+}
+
+/** Format one inspector section without forcing users through the full raw report. */
+function formatDebugSection(report: DebugSystemPromptReport, section: DebugSection): string[] {
+  switch (section) {
+    case "overview":
+      return formatOverviewSection(report);
+    case "contributors":
+      return formatContributorsSection(report);
+    case "literal-payload":
+      return formatLiteralPayloadSection(report);
+    case "assembled-prompt":
+      return ["```text", report.systemPrompt, "```"];
+    case "structured-inputs": {
+      const lines: string[] = [];
+      appendPromptOptions(lines, report.options);
+      return lines;
+    }
+    case "active-tools":
+      return formatToolListSection(report, true);
+    case "all-tools":
+      return formatToolListSection(report, false);
+    case "full-report":
+      return formatDebugSystemPromptReport(report);
+  }
+}
+
+/** Format a short dashboard for prompt freshness, size, context, and largest contributors. */
+function formatOverviewSection(report: DebugSystemPromptReport): string[] {
+  const promptTokens = estimateText(report.systemPrompt);
+  const lines = [
+    `Snapshot: ${report.snapshot === "current" ? "current command context" : "last agent turn"}`,
+    `Model: ${formatModel(report.model)}`,
+    `System prompt: ~${formatTokens(promptTokens)} tokens, ${report.systemPrompt.length} chars`,
+    `Context usage: ${formatUsage(report.usage, report.model)}`,
+    `Active tools: ${report.activeTools.length ? report.activeTools.join(", ") : "(none)"}`,
+    "",
+    "Largest contributors:",
+  ];
+  const sorted = [...report.contributors].sort((a, b) => b.tokens - a.tokens).slice(0, 8);
+  if (!sorted.length) lines.push("- (none)");
+  for (const contributor of sorted) {
+    lines.push(`- ${contributor.label}: ~${formatTokens(contributor.tokens)} tokens`);
+  }
+  lines.push("", "Backspace returns to sections.");
+  return lines;
+}
+
+/** Format contributors from largest to smallest so token-heavy inputs are obvious. */
+function formatContributorsSection(report: DebugSystemPromptReport): string[] {
+  const lines = ["Estimated token contribution by prompt input:", ""];
+  const sorted = [...report.contributors].sort((a, b) => b.tokens - a.tokens);
+  if (!sorted.length) lines.push("- (none)");
+  for (const contributor of sorted) {
+    lines.push(`- ${contributor.label}: ~${formatTokens(contributor.tokens)} tokens`);
+  }
+  return lines;
+}
+
+/** Format the exact system prompt together with active tool definitions sent alongside it. */
+function formatLiteralPayloadSection(report: DebugSystemPromptReport): string[] {
+  const activeTools = report.tools.filter((tool) => report.activeTools.includes(tool.name));
+  return [
+    "Pi sends the system prompt text and tool definitions as separate request fields.",
+    "This section shows those literal request inputs together; inactive registered tools are excluded.",
+    "",
+    "## system prompt",
+    "```text",
+    report.systemPrompt,
+    "```",
+    "",
+    "## active tool definitions",
+    "```json",
+    stableJson(activeTools.map((tool) => serializableTool(tool, report.activeTools))),
+    "```",
+  ];
+}
+
+/** Format active or registered tool definitions as a readable debug section. */
+function formatToolListSection(report: DebugSystemPromptReport, activeOnly: boolean): string[] {
+  const tools = activeOnly
+    ? report.tools.filter((tool) => report.activeTools.includes(tool.name))
+    : report.tools;
+  const lines = [activeOnly ? "Active tool definitions:" : "All registered tool definitions:", ""];
+  if (!tools.length) lines.push("(none)");
+  for (const tool of tools) appendTool(lines, tool, report.activeTools.includes(tool.name));
   return lines;
 }
 
@@ -299,5 +494,7 @@ function stableJson(value: unknown): string {
 export const __debugSystemPromptForTest = {
   buildDebugSystemPromptReport,
   formatDebugSystemPromptReport,
+  formatDebugSection,
+  debugSectionItems,
   promptContributors,
 } satisfies Record<string, unknown>;
