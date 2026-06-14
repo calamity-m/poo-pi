@@ -82,9 +82,33 @@ test("searchPrompts filters names, descriptions, and argument hints", () => {
     ["explain"],
   );
   assert.deepEqual(
-    __promptForTest.searchPrompts(prompts, "", 2).map((prompt) => prompt.name),
-    ["review", "commit"],
+    __promptForTest.searchPrompts(prompts, "").map((prompt) => prompt.name),
+    ["review", "commit", "explain"],
   );
+});
+
+test("PromptPickerComponent scrolls through prompts beyond the rendered window", () => {
+  const prompts = Array.from({ length: 12 }, (_item, index) => ({
+    name: `prompt-${index}`,
+    description: "",
+    argumentHint: "",
+  }));
+  const keybindings = {
+    matches: (data, id) => data === "down" && id === "tui.select.down",
+  };
+  const picker = new __promptForTest.PromptPickerComponent(
+    prompts,
+    { fg: (_key, text) => text, bold: (text) => text },
+    keybindings,
+    () => {},
+    () => {},
+  );
+
+  for (let index = 0; index < 11; index++) picker.handleInput("down");
+
+  const rendered = picker.render(80).join("\n");
+  assert.match(rendered, /→ \/prompt-11/);
+  assert.doesNotMatch(rendered, /  \/prompt-0/);
 });
 
 test("PromptFillEditor resolves filled text without submitting to the agent", () => {

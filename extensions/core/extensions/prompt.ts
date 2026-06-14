@@ -64,8 +64,8 @@ const FILL_CONTEXT_LINES_BEFORE = 5;
 /** Lines of prompt context shown below the active placeholder. */
 const FILL_CONTEXT_LINES_AFTER = 8;
 
-/** Maximum number of prompt template matches to show in the picker. */
-const MAX_PROMPT_RESULTS = 10;
+/** Maximum number of prompt template matches to render at once in the picker. */
+const VISIBLE_PROMPT_RESULTS = 10;
 
 /** Regex matching every placeholder token this command supports. */
 const PLACEHOLDER_PATTERN = /\$ARGUMENTS|\$@|\$[1-9][0-9]*|\$\{@:[0-9]+(?::[0-9]+)?\}/g;
@@ -209,17 +209,12 @@ function promptLabel(prompt: PromptTemplate): string {
   return `/${prompt.name}${hint}${description}`;
 }
 
-/** Return prompt templates matching the current picker query. */
-function searchPrompts(
-  prompts: readonly PromptTemplate[],
-  query: string,
-  limit = MAX_PROMPT_RESULTS,
-): PromptTemplate[] {
+/** Return all prompt templates matching the current picker query. */
+function searchPrompts(prompts: readonly PromptTemplate[], query: string): PromptTemplate[] {
   const normalizedQuery = query.trim().toLocaleLowerCase();
-  const matches = normalizedQuery
+  return normalizedQuery
     ? prompts.filter((prompt) => promptSearchText(prompt).includes(normalizedQuery))
     : [...prompts];
-  return matches.slice(0, limit);
 }
 
 /** Return the combined searchable text for one prompt template. */
@@ -559,8 +554,10 @@ class PromptPickerComponent extends Container implements Focusable {
   private readonly requestRender: () => void;
   /** Current filtered prompt list. */
   private results: PromptTemplate[] = [];
-  /** Highlighted result index. */
+  /** Highlighted result index in the full filtered result set. */
   private selectedIndex = 0;
+  /** First full-result index rendered in the visible window. */
+  private scrollOffset = 0;
   /** Focus state mirrored into the embedded input for IME cursor placement. */
   private focusedValue = false;
 
@@ -603,12 +600,18 @@ class PromptPickerComponent extends Container implements Focusable {
     if (this.results.length === 0) {
       lines.push(this.pickerTheme.fg("warning", "No matching prompt templates"));
     } else {
-      for (let index = 0; index < this.results.length; index++) {
+      const end = Math.min(this.results.length, this.scrollOffset + VISIBLE_PROMPT_RESULTS);
+      for (let index = this.scrollOffset; index < end; index++) {
         lines.push(this.renderResult(index, width));
+      }
+      if (this.results.length > VISIBLE_PROMPT_RESULTS) {
+        lines.push(
+          this.pickerTheme.fg("dim", `${this.selectedIndex + 1}/${this.results.length} prompts`),
+        );
       }
     }
 
-    lines.push(this.pickerTheme.fg("dim", "↑↓ navigate • enter select • esc cancel"));
+    lines.push(this.pickerTheme.fg("dim", "↑↓ navigate/scroll • enter select • esc cancel"));
     return this.chrome.render("prompt", width, lines);
   }
 
@@ -644,17 +647,30 @@ class PromptPickerComponent extends Container implements Focusable {
     this.input.invalidate();
   }
 
-  /** Move the selected match, wrapping around the visible result set. */
+  /** Move the selected match, wrapping around the full filtered result set. */
   private moveSelection(delta: number): void {
     if (this.results.length === 0) return;
     this.selectedIndex = (this.selectedIndex + delta + this.results.length) % this.results.length;
+    this.ensureSelectionVisible();
     this.requestRender();
   }
 
   /** Recompute the visible prompt list for the current filter. */
   private refreshResults(): void {
-    this.results = searchPrompts(this.prompts, this.input.getValue(), MAX_PROMPT_RESULTS);
+    this.results = searchPrompts(this.prompts, this.input.getValue());
     this.selectedIndex = 0;
+    this.scrollOffset = 0;
+  }
+
+  /** Scroll the rendered window so the highlighted prompt is visible. */
+  private ensureSelectionVisible(): void {
+    if (this.selectedIndex < this.scrollOffset) {
+      this.scrollOffset = this.selectedIndex;
+      return;
+    }
+    if (this.selectedIndex >= this.scrollOffset + VISIBLE_PROMPT_RESULTS) {
+      this.scrollOffset = this.selectedIndex - VISIBLE_PROMPT_RESULTS + 1;
+    }
   }
 
   /** Render one selectable prompt row. */
@@ -746,4 +762,5 @@ export const __promptForTest = {
   expandVisualPrompt,
   loadPrompts,
   PromptFillEditor,
+  PromptPickerComponent,
 } satisfies Record<string, unknown>;
