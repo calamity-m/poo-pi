@@ -2,7 +2,6 @@ import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { registerClear } from "./extensions/clear.ts";
 import { registerContext } from "./extensions/context.ts";
-import { registerDebugSystemPrompt } from "./extensions/debug-system-prompt.ts";
 import { registerCoreFooter } from "./extensions/footer.ts";
 import { registerCoreHeader } from "./extensions/header.ts";
 import { registerHelp } from "./extensions/help.ts";
@@ -26,7 +25,6 @@ import {
 export default function core(pi: ExtensionAPI) {
   registerClear(pi);
   registerContext(pi);
-  registerDebugSystemPrompt(pi);
   registerCoreHeader(pi);
   registerHelp(pi);
   registerHistorySearch(pi);

@@ -4,7 +4,7 @@ import test from "node:test";
 import {
   __debugSystemPromptForTest,
   registerDebugSystemPrompt,
-} from "../extensions/core/extensions/debug-system-prompt.ts";
+} from "../extensions/debug/index.ts";
 
 test("/debug-system-prompt opens an overlay popup when UI is available", async () => {
   let handler;

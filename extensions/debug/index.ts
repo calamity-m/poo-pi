@@ -8,8 +8,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 import { estimateTokens } from "@earendil-works/pi-agent-core";
 
-import { formatPercent, formatTokens } from "../lib/format.ts";
-import { showPanel } from "../lib/ui/panel.ts";
+import { formatPercent, formatTokens } from "../core/lib/format.ts";
+import { showPanel } from "../core/lib/ui/panel.ts";
 
 /** Last prompt data captured after all earlier before-agent-start handlers reached this extension. */
 interface CapturedPrompt {
@@ -66,6 +66,11 @@ interface CommandPromptContext {
 /** Narrow command context to the prompt-debug API surface while local peer types catch up. */
 function commandPromptContext(ctx: ExtensionCommandContext): CommandPromptContext {
   return ctx as ExtensionCommandContext & CommandPromptContext;
+}
+
+/** Load the debug extension and register its debug commands. */
+export default function debug(pi: ExtensionAPI): void {
+  registerDebugSystemPrompt(pi);
 }
 
 /** Register `/debug-system-prompt`, a popup inspector for prompt inputs and tool definitions. */
