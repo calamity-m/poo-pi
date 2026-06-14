@@ -10,7 +10,7 @@ import type {
 
 import { deriveBashPatterns } from "./bash.ts";
 import { decide, isBashEnvAccess, isEnvBasename } from "./policy.ts";
-import { addGrant, writePermissionState } from "./persistence.ts";
+import { addGrant, writePermissionRulesAndGrants } from "./persistence.ts";
 import type {
   BashTarget,
   CompiledGrant,
@@ -216,7 +216,7 @@ export async function askOperator(
       for (const g of grants) addGrant(state, g);
     }
 
-    await writePermissionState(ctx.cwd, state);
+    await writePermissionRulesAndGrants(ctx.cwd, state);
     return undefined;
   }
 

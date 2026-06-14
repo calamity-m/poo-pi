@@ -1,6 +1,7 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
 import { showInlinePanel, showSelectPanel } from "../../lib/ui/panel.ts";
+import { requestCoreFooterRender } from "../footer.ts";
 import {
   SAFE_ALLOW_TOOLS,
   TRUSTED_BASH_ALLOW_PATTERNS,
@@ -141,7 +142,7 @@ async function saveDefaultMode(ctx: ExtensionCommandContext, mode: PermissionMod
   ctx.ui.notify(`permissions: default mode set to ${mode} (${defaultConfigFilePath()})`, "info");
 }
 
-/** Apply a new mode: update process-global state, persist, and show showcase. */
+/** Apply a new live mode and show the policy showcase. */
 async function applyMode(
   ctx: ExtensionCommandContext,
   state: PermissionState,
@@ -152,7 +153,7 @@ async function applyMode(
 }
 
 /**
- * Mutate the shared permission state's mode in place and persist it.
+ * Mutate the shared permission state's mode in place without changing the saved default.
  * Mutating (not replacing) the object keeps the `tool_call` hook closure live.
  * Shared with `/core-settings` so the settings UI applies modes through the
  * same path as `/permissions` without rendering the showcase panel.
@@ -163,8 +164,8 @@ export async function applyPermissionMode(
   mode: PermissionMode,
 ): Promise<void> {
   state.mode = mode;
-  await writePermissionState(ctx.cwd, state);
   ctx.ui.setStatus("permissions", `perm:${state.mode}`);
+  requestCoreFooterRender();
 }
 
 // ── /permissions edit ────────────────────────────────────────────────────────
@@ -224,6 +225,7 @@ export async function editPermissionConfig(
   state.remembered = result.remembered;
   await writePermissionState(ctx.cwd, state);
   ctx.ui.setStatus("permissions", `perm:${state.mode}`);
+  requestCoreFooterRender();
   ctx.ui.notify("[permissions] config updated and applied", "info");
 }
 

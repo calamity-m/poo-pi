@@ -4,6 +4,7 @@ import type {
   ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { requestCoreFooterRender } from "../footer.ts";
 import { buildToolCallHandler, createMutex } from "./enforcement.ts";
 import { reloadState } from "./persistence.ts";
 import {
@@ -79,6 +80,7 @@ export function registerPermissions(pi: ExtensionAPI): PermissionsController {
     // Reset the degraded-notify flag on reload so fresh errors surface again
     global.notifiedRef[0] = false;
     ctx.ui.setStatus(STATUS_KEY, `perm:${global.state.mode}`);
+    requestCoreFooterRender();
   };
 
   pi.on("session_start", (_event, ctx) => load(ctx));

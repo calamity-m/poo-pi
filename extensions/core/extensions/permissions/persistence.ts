@@ -68,8 +68,27 @@ export async function writeDefaultPermissionMode(mode: PermissionMode): Promise<
  * (not the compiled regexes).
  */
 export async function writePermissionState(cwd: string, state: PermissionState): Promise<void> {
-  const config: PersistedPermissionConfig = {
-    mode: state.mode,
+  await writeCorePermissionConfig(cwd, serializePermissionState(state, state.mode));
+}
+
+/** Persist rules and grants without changing the configured default mode. */
+export async function writePermissionRulesAndGrants(
+  cwd: string,
+  state: PermissionState,
+): Promise<void> {
+  await writeCorePermissionConfig(
+    cwd,
+    serializePermissionState(state, await readDefaultPermissionMode()),
+  );
+}
+
+/** Serialize compiled permission state using the supplied persisted mode. */
+function serializePermissionState(
+  state: PermissionState,
+  mode: PermissionMode,
+): PersistedPermissionConfig {
+  return {
+    mode,
     rules: state.rules.map((r) => ({ tool: r.tool, action: r.action, pattern: r.pattern })),
     remembered: state.remembered.map((g) => {
       const out: RememberedGrant = { tool: g.tool };
@@ -78,7 +97,6 @@ export async function writePermissionState(cwd: string, state: PermissionState):
       return out;
     }),
   };
-  await writeCorePermissionConfig(cwd, config);
 }
 
 /**
