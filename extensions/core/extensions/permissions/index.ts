@@ -91,7 +91,6 @@ export function registerPermissions(pi: ExtensionAPI): PermissionsController {
     getMode: () => global.state.mode,
     setMode: async (ctx, mode) => {
       await applyPermissionMode(ctx, global.state, mode);
-      ctx.ui.setStatus(STATUS_KEY, `perm:${global.state.mode}`);
     },
     editConfig: (ctx) => editPermissionConfig(ctx, global.state),
   };

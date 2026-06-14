@@ -35,6 +35,7 @@ import {
   writeDefaultPermissionMode,
   writePermissionState,
 } from "../extensions/core/extensions/permissions/persistence.ts";
+import { registerPermissionsCommand } from "../extensions/core/extensions/permissions/register.ts";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -493,6 +494,35 @@ console.log("\n6. persistence (read/write/compile)");
     // validateConfig: invalid JSON shape
     const invalidShape = validateConfig("not an object");
     assert(typeof invalidShape === "string", "validateConfig: non-object returns error string");
+
+    // /permissions direct mode changes persist and refresh the live status.
+    let handler;
+    registerPermissionsCommand(
+      {
+        registerCommand: (_name, definition) => {
+          handler = definition.handler;
+        },
+      },
+      makeState({ mode: "trusted" }),
+    );
+    let status;
+    await handler("safe", {
+      hasUI: false,
+      cwd: tmpDir,
+      signal: undefined,
+      ui: {
+        notify: () => {},
+        setStatus: (_key, value) => {
+          status = value;
+        },
+      },
+    });
+    assertEqual(status, "perm:safe", "/permissions safe refreshes status");
+    assertEqual(
+      (await readPermissionState(tmpDir)).mode,
+      "safe",
+      "/permissions safe persists mode",
+    );
   } finally {
     if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = oldAgentDir;

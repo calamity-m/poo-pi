@@ -164,6 +164,7 @@ export async function applyPermissionMode(
 ): Promise<void> {
   state.mode = mode;
   await writePermissionState(ctx.cwd, state);
+  ctx.ui.setStatus("permissions", `perm:${state.mode}`);
 }
 
 // ── /permissions edit ────────────────────────────────────────────────────────
@@ -222,6 +223,7 @@ export async function editPermissionConfig(
   state.rules = result.rules;
   state.remembered = result.remembered;
   await writePermissionState(ctx.cwd, state);
+  ctx.ui.setStatus("permissions", `perm:${state.mode}`);
   ctx.ui.notify("[permissions] config updated and applied", "info");
 }
 
