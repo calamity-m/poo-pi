@@ -24,7 +24,7 @@
     "typecheck": "tsc --noEmit",
     "test": "tsc --noEmit && node --test tests/*.test.mjs",
     "test:smoke": "node --test tests/smoke.test.mjs",
-    "validate:json": "node -e \"for (const f of ['themes/poo-dark.json','themes/poo-light.json','package.json']) JSON.parse(require('fs').readFileSync(f,'utf8')); console.log('json ok')\"",
+    "validate:json": "node -e \"for (const f of ['themes/kanagawa.json','themes/poo-dark.json','themes/poo-light.json','package.json']) JSON.parse(require('fs').readFileSync(f,'utf8')); console.log('json ok')\"",
     "format": "oxfmt .",
     "format:check": "oxfmt --check .",
     "lint": "oxlint .",

@@ -49,6 +49,7 @@ prompts/
   release-check.md
   review.md
 themes/
+  kanagawa.json
   poo-dark.json
   poo-light.json
 ```
