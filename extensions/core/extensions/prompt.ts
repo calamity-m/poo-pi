@@ -6,7 +6,9 @@ import type {
   SlashCommandInfo,
 } from "@earendil-works/pi-coding-agent";
 import {
+  Container,
   CURSOR_MARKER,
+  Input,
   Key,
   matchesKey,
   truncateToWidth,
@@ -16,6 +18,8 @@ import {
   type TUI,
 } from "@earendil-works/pi-tui";
 import type { AutocompleteItem } from "@earendil-works/pi-tui";
+
+import { PanelChrome } from "../lib/ui/panel.ts";
 
 /** Prompt template loaded from Pi's discovered prompt slash commands. */
 interface PromptTemplate {
@@ -59,6 +63,9 @@ const FILL_CONTEXT_LINES_BEFORE = 5;
 
 /** Lines of prompt context shown below the active placeholder. */
 const FILL_CONTEXT_LINES_AFTER = 8;
+
+/** Maximum number of prompt template matches to show in the picker. */
+const MAX_PROMPT_RESULTS = 10;
 
 /** Regex matching every placeholder token this command supports. */
 const PLACEHOLDER_PATTERN = /\$ARGUMENTS|\$@|\$[1-9][0-9]*|\$\{@:[0-9]+(?::[0-9]+)?\}/g;
@@ -200,6 +207,24 @@ function promptLabel(prompt: PromptTemplate): string {
   const hint = prompt.argumentHint ? ` ${prompt.argumentHint}` : "";
   const description = prompt.description ? ` — ${prompt.description}` : "";
   return `/${prompt.name}${hint}${description}`;
+}
+
+/** Return prompt templates matching the current picker query. */
+function searchPrompts(
+  prompts: readonly PromptTemplate[],
+  query: string,
+  limit = MAX_PROMPT_RESULTS,
+): PromptTemplate[] {
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const matches = normalizedQuery
+    ? prompts.filter((prompt) => promptSearchText(prompt).includes(normalizedQuery))
+    : [...prompts];
+  return matches.slice(0, limit);
+}
+
+/** Return the combined searchable text for one prompt template. */
+function promptSearchText(prompt: PromptTemplate): string {
+  return [prompt.name, prompt.argumentHint, prompt.description].join(" ").toLocaleLowerCase();
 }
 
 /** Detect fields the visual filler should ask the user to populate. */
@@ -513,6 +538,136 @@ function loadPrompts(commands: SlashCommandInfo[]): {
   return { prompts, warnings };
 }
 
+/** Interactive prompt picker with a live text filter. */
+class PromptPickerComponent extends Container implements Focusable {
+  /** Embedded search input that receives printable text. */
+  private readonly input: Input;
+  /** Prompt templates available to search. */
+  private readonly prompts: readonly PromptTemplate[];
+  /** Theme helpers used by the picker. */
+  private readonly pickerTheme: {
+    fg(color: string, text: string): string;
+    bold(text: string): string;
+  };
+  /** Shared border/title renderer. */
+  private readonly chrome: PanelChrome;
+  /** Pi keybinding matcher for select navigation. */
+  private readonly keybindings: { matches(data: string, id: string): boolean };
+  /** Completion callback for select or cancel. */
+  private readonly done: (result: PromptTemplate | undefined) => void;
+  /** Redraw callback after state changes. */
+  private readonly requestRender: () => void;
+  /** Current filtered prompt list. */
+  private results: PromptTemplate[] = [];
+  /** Highlighted result index. */
+  private selectedIndex = 0;
+  /** Focus state mirrored into the embedded input for IME cursor placement. */
+  private focusedValue = false;
+
+  /** Create a prompt picker over all loaded templates. */
+  constructor(
+    prompts: readonly PromptTemplate[],
+    theme: { fg(color: string, text: string): string; bold(text: string): string },
+    keybindings: { matches(data: string, id: string): boolean },
+    done: (result: PromptTemplate | undefined) => void,
+    requestRender: () => void,
+  ) {
+    super();
+    this.prompts = prompts;
+    this.pickerTheme = theme;
+    this.chrome = new PanelChrome(theme);
+    this.keybindings = keybindings;
+    this.done = done;
+    this.requestRender = requestRender;
+    this.input = new Input();
+    this.addChild(this.input);
+    this.refreshResults();
+  }
+
+  /** Propagate focus to the embedded input for terminal IME/cursor placement. */
+  get focused(): boolean {
+    return this.focusedValue;
+  }
+
+  set focused(value: boolean) {
+    this.focusedValue = value;
+    this.input.focused = value;
+  }
+
+  /** Render the filter box, matching prompts, and compact key help. */
+  render(width: number): string[] {
+    const lines = this.input.render(Math.max(1, width));
+    const query = this.input.getValue().trim();
+
+    if (!query) lines.push(this.pickerTheme.fg("dim", "Type to filter prompt templates…"));
+    if (this.results.length === 0) {
+      lines.push(this.pickerTheme.fg("warning", "No matching prompt templates"));
+    } else {
+      for (let index = 0; index < this.results.length; index++) {
+        lines.push(this.renderResult(index, width));
+      }
+    }
+
+    lines.push(this.pickerTheme.fg("dim", "↑↓ navigate • enter select • esc cancel"));
+    return this.chrome.render("prompt", width, lines);
+  }
+
+  /** Route navigation keys to the result list and text editing to the filter input. */
+  handleInput(data: string): void {
+    if (this.keybindings.matches(data, "tui.select.cancel")) {
+      this.done(undefined);
+      return;
+    }
+    if (this.keybindings.matches(data, "tui.select.confirm")) {
+      const selected = this.results[this.selectedIndex];
+      if (selected) this.done(selected);
+      return;
+    }
+    if (this.keybindings.matches(data, "tui.select.up")) {
+      this.moveSelection(-1);
+      return;
+    }
+    if (this.keybindings.matches(data, "tui.select.down")) {
+      this.moveSelection(1);
+      return;
+    }
+
+    const before = this.input.getValue();
+    this.input.handleInput(data);
+    if (this.input.getValue() !== before) this.refreshResults();
+    this.requestRender();
+  }
+
+  /** Clear cached child render state. */
+  invalidate(): void {
+    super.invalidate();
+    this.input.invalidate();
+  }
+
+  /** Move the selected match, wrapping around the visible result set. */
+  private moveSelection(delta: number): void {
+    if (this.results.length === 0) return;
+    this.selectedIndex = (this.selectedIndex + delta + this.results.length) % this.results.length;
+    this.requestRender();
+  }
+
+  /** Recompute the visible prompt list for the current filter. */
+  private refreshResults(): void {
+    this.results = searchPrompts(this.prompts, this.input.getValue(), MAX_PROMPT_RESULTS);
+    this.selectedIndex = 0;
+  }
+
+  /** Render one selectable prompt row. */
+  private renderResult(index: number, width: number): string {
+    const prefix = index === this.selectedIndex ? "→ " : "  ";
+    if (width <= prefix.length) return truncateToWidth(prefix, width, "");
+
+    const label = truncateToWidth(promptLabel(this.results[index]!), width - prefix.length, "…");
+    const line = `${prefix}${label}`;
+    return index === this.selectedIndex ? this.pickerTheme.fg("accent", line) : line;
+  }
+}
+
 /** Resolve the prompt selected or requested by the user. */
 async function choosePrompt(
   ctx: ExtensionCommandContext,
@@ -529,10 +684,9 @@ async function choosePrompt(
     return prompt;
   }
 
-  const choices = new Map<string, PromptTemplate>();
-  for (const prompt of prompts) choices.set(promptLabel(prompt), prompt);
-  const selected = await ctx.ui.select("Pick a prompt template", [...choices.keys()]);
-  return selected ? choices.get(selected) : undefined;
+  return await ctx.ui.custom<PromptTemplate | undefined>((tui, theme, keybindings, done) => {
+    return new PromptPickerComponent(prompts, theme, keybindings, done, () => tui.requestRender());
+  });
 }
 
 /** Register `/prompt`, a visual prompt-template picker and filler for discovered templates. */
@@ -587,6 +741,7 @@ export const __promptForTest = {
   rawArgsAfterFirstToken,
   expandPrompt,
   promptLabel,
+  searchPrompts,
   detectFillFields,
   expandVisualPrompt,
   loadPrompts,

@@ -66,6 +66,27 @@ test("detectFillFields shares raw argument aliases and seeds positional values",
   assert.deepEqual(fields[1], { tokens: ["$2"], label: "$2", value: "two" });
 });
 
+test("searchPrompts filters names, descriptions, and argument hints", () => {
+  const prompts = [
+    { name: "review", description: "Inspect code", argumentHint: "<path>" },
+    { name: "commit", description: "Write git message", argumentHint: "" },
+    { name: "explain", description: "Teach a concept", argumentHint: "<topic>" },
+  ];
+
+  assert.deepEqual(
+    __promptForTest.searchPrompts(prompts, "git").map((prompt) => prompt.name),
+    ["commit"],
+  );
+  assert.deepEqual(
+    __promptForTest.searchPrompts(prompts, "TOPIC").map((prompt) => prompt.name),
+    ["explain"],
+  );
+  assert.deepEqual(
+    __promptForTest.searchPrompts(prompts, "", 2).map((prompt) => prompt.name),
+    ["review", "commit"],
+  );
+});
+
 test("PromptFillEditor resolves filled text without submitting to the agent", () => {
   let submittedText;
   let completedText;
