@@ -9,6 +9,11 @@ import {
 import { formatSeen } from "./stats.ts";
 import type { SkillRow, SkillsTheme, SkillSortMode } from "./types.ts";
 
+/** Rows of the grouped skill list kept visible before scrolling. */
+const LIST_HEIGHT = 22;
+
+type GroupedSkillRow = { type: "group"; label: string } | { type: "skill"; skill: SkillRow };
+
 /** Pad text to a visible width after truncating ANSI-aware content. */
 function pad(text: string, width: number): string {
   const truncated = truncateToWidth(text, width, "");
@@ -23,14 +28,23 @@ export class SkillsPanel implements Focusable {
   private query = "";
   private searchActive = false;
   private sort: SkillSortMode = "scope";
+  private readonly skills: SkillRow[];
+  private readonly tui: TUI;
+  private readonly theme: SkillsTheme;
+  private readonly done: (command: string | null) => void;
 
   /** Build the panel around static skill rows captured when `/skills` was invoked. */
   constructor(
-    private skills: SkillRow[],
-    private tui: TUI,
-    private theme: SkillsTheme,
-    private done: (command: string | null) => void,
-  ) {}
+    skills: SkillRow[],
+    tui: TUI,
+    theme: SkillsTheme,
+    done: (command: string | null) => void,
+  ) {
+    this.skills = skills;
+    this.tui = tui;
+    this.theme = theme;
+    this.done = done;
+  }
 
   /** Handle search, sorting, movement, dismissal, and skill selection keystrokes. */
   handleInput(data: string): void {
@@ -87,8 +101,7 @@ export class SkillsPanel implements Focusable {
       ` ${this.searchActive ? "⌕" : " "} ${this.query ? searchText : th.fg("dim", searchText)}`,
       innerWidth,
     )}${border("│")}`;
-    const listHeight = 22;
-    const visibleList = groups.slice(this.scroll, this.scroll + listHeight);
+    const visibleList = groups.slice(this.scroll, this.scroll + LIST_HEIGHT);
     const lines = [
       th.fg("accent", th.bold(header)),
       th.fg("dim", help),
@@ -142,10 +155,8 @@ export class SkillsPanel implements Focusable {
   }
 
   /** Insert scope separators when sorting by scope. */
-  private groupRows(
-    rows: SkillRow[],
-  ): Array<{ type: "group"; label: string } | { type: "skill"; skill: SkillRow }> {
-    const result: Array<{ type: "group"; label: string } | { type: "skill"; skill: SkillRow }> = [];
+  private groupRows(rows: SkillRow[]): GroupedSkillRow[] {
+    const result: GroupedSkillRow[] = [];
     let lastScope = "";
     for (const skill of rows) {
       if (this.sort === "scope" && skill.scope !== lastScope) {
@@ -185,9 +196,29 @@ export class SkillsPanel implements Focusable {
     const groupedIndex = grouped.findIndex(
       (item) => item.type === "skill" && item.skill === selectedRow,
     );
+    if (groupedIndex < 0) {
+      this.scroll = 0;
+      return;
+    }
+
     if (groupedIndex < this.scroll) this.scroll = groupedIndex;
-    else if (groupedIndex >= this.scroll + 22) this.scroll = groupedIndex - 21;
+    else if (groupedIndex >= this.scroll + LIST_HEIGHT) {
+      this.scroll = groupedIndex - LIST_HEIGHT + 1;
+    }
+
+    const headerIndex = this.groupHeaderIndex(grouped, groupedIndex);
+    if (groupedIndex - headerIndex < LIST_HEIGHT) this.scroll = Math.min(this.scroll, headerIndex);
     this.scroll = Math.max(0, this.scroll);
+  }
+
+  /** Return the nearest scope heading above the selected grouped row. */
+  private groupHeaderIndex(grouped: GroupedSkillRow[], groupedIndex: number): number {
+    if (this.sort !== "scope") return groupedIndex;
+    for (let index = groupedIndex; index >= 0; index--) {
+      const item = grouped[index];
+      if (item?.type === "group" && item.label) return index;
+    }
+    return groupedIndex;
   }
 
   /** Append selected-skill details and usage statistics to rendered lines. */
