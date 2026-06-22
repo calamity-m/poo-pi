@@ -30,6 +30,72 @@ The old flat shape with top-level `permissions.rules` and `permissions.remembere
 
 `open` has no rule/grant block. “Always For This Project” writes a grant to the project-local active mode block without pinning project-local `permissions.mode`.
 
+## Examples
+
+### Global default with per-mode rules
+
+Use the global file for defaults that should follow you across projects:
+
+```json
+{
+  "permissions": {
+    "mode": "trusted",
+    "trusted": {
+      "rules": [
+        { "tool": "bash", "action": "deny", "pattern": "rm\\s+-rf" },
+        { "tool": "bash", "action": "ask", "pattern": "^docker\\b" }
+      ]
+    },
+    "permissive": {
+      "rules": [{ "tool": "bash", "action": "ask", "pattern": "^curl\\b" }]
+    }
+  }
+}
+```
+
+### Project-local override
+
+A trusted project can narrow or replace a global rule by writing `.pi/poo/core-settings.json`:
+
+```json
+{
+  "permissions": {
+    "mode": "safe",
+    "safe": {
+      "rules": [{ "tool": "bash", "action": "allow", "pattern": "^npm\\s+test\\b" }]
+    }
+  }
+}
+```
+
+Because project rules are checked before global rules, a project rule with the same `tool` and `pattern` replaces the global rule for display and enforcement.
+
+### Remembered grant
+
+Choosing “Always For This Project” for a bash prompt writes a project-local grant under the active mode:
+
+```json
+{
+  "permissions": {
+    "trusted": {
+      "remembered": [{ "tool": "bash", "pattern": "^npm\\s+run\\s+build\\b" }]
+    }
+  }
+}
+```
+
+For path tools, remembered grants use `dirPrefix` instead:
+
+```json
+{
+  "permissions": {
+    "trusted": {
+      "remembered": [{ "tool": "write", "dirPrefix": "/home/me/project/src" }]
+    }
+  }
+}
+```
+
 ## Merge and precedence
 
 Active mode is resolved as: project `permissions.mode` → global `permissions.mode` → built-in `trusted`.
