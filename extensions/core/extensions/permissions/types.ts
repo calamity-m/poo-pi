@@ -1,6 +1,16 @@
 /** Active permission mode for the current session. */
 export type PermissionMode = "safe" | "trusted" | "open" | "permissive";
 
+/** Permission modes that own persisted rule/grant blocks. */
+export type NonOpenPermissionMode = Exclude<PermissionMode, "open">;
+
+/** Stable list of persisted mode-block keys. */
+export const NON_OPEN_PERMISSION_MODES: readonly NonOpenPermissionMode[] = [
+  "safe",
+  "trusted",
+  "permissive",
+];
+
 /** Action outcome for a policy rule. */
 export type RuleAction = "allow" | "ask" | "deny";
 
@@ -29,11 +39,24 @@ export interface RememberedGrant {
   pattern?: string;
 }
 
-/** Permissions section shape inside centralized core settings. */
+/** Rules and grants persisted for one non-open permission mode. */
+export interface ModePermissionConfig {
+  /** Human-authored rules for this mode block. */
+  rules?: Rule[];
+  /** Machine-written or hand-authored grants for this mode block. */
+  remembered?: RememberedGrant[];
+}
+
+/** Permissions section shape inside global or project-local core settings. */
 export interface PersistedPermissionConfig {
-  mode: PermissionMode;
-  rules: Rule[];
-  remembered: RememberedGrant[];
+  /** Active/default mode for this scope; optional so local grants need not pin mode. */
+  mode?: PermissionMode;
+  /** Rules and grants used when safe is active. */
+  safe?: ModePermissionConfig;
+  /** Rules and grants used when trusted is active. */
+  trusted?: ModePermissionConfig;
+  /** Rules and grants used when permissive is active. */
+  permissive?: ModePermissionConfig;
 }
 
 /** Rule with precompiled regex for hot-path matching. */
@@ -52,11 +75,54 @@ export interface CompiledGrant {
   regex?: RegExp;
 }
 
+/** One compiled permissions scope in the effective project/global merge. */
+export interface CompiledPermissionScope {
+  /** Compiled rules active for the selected mode. */
+  rules: CompiledRule[];
+  /** Compiled remembered grants active for the selected mode. */
+  remembered: CompiledGrant[];
+}
+
+/** Diagnostic metadata for the effective permissions merge. */
+export interface PermissionSourceMetadata {
+  /** Cwd used as the project-local config root. */
+  cwd: string;
+  /** Whether project-local permissions were eligible to load. */
+  projectTrusted: boolean;
+  /** Whether the active mode came from project, global, or built-in defaults. */
+  modeSource: "project" | "global" | "default";
+  /** Project-local settings file path. */
+  projectPath: string;
+  /** Global settings file path. */
+  globalPath: string;
+  /** Reason project-local permissions were ignored, if any. */
+  ignoredProjectReason?: string;
+  /** Reason global permissions fell back to built-in defaults, if any. */
+  ignoredGlobalReason?: string;
+  /** Global default mode even when shadowed by a project-local mode. */
+  globalMode?: PermissionMode;
+  /** Rule/grant counts and replacement notes for each compiled scope. */
+  counts: {
+    project: { rules: number; remembered: number };
+    global: { rules: number; remembered: number };
+    overriddenRules: string[];
+    overriddenGrants: string[];
+  };
+}
+
 /** In-memory permission state; process-global and reload-stable. */
 export interface PermissionState {
   mode: PermissionMode;
+  /** Flattened active rules retained for display and legacy pure-policy callers. */
   rules: CompiledRule[];
+  /** Flattened active grants retained for display and legacy pure-policy callers. */
   remembered: CompiledGrant[];
+  /** Project-local compiled scope, evaluated before global when present. */
+  projectScope?: CompiledPermissionScope;
+  /** Global compiled scope. */
+  globalScope?: CompiledPermissionScope;
+  /** Source and merge metadata for UI/status messages. */
+  metadata?: PermissionSourceMetadata;
 }
 
 /** A resolved path-tool target (read/write/edit/grep/find/ls). */

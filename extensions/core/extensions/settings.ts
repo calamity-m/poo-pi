@@ -68,7 +68,7 @@ export function registerCoreSettings(pi: ExtensionAPI, controllers: CoreSettings
         return;
       }
       if (sub === "edit") {
-        await editSettings(ctx);
+        await editSettings(ctx, controllers);
         return;
       }
       if (sub === "path") {
@@ -100,7 +100,10 @@ async function showSettings(ctx: ExtensionCommandContext): Promise<void> {
 }
 
 /** Open the unified core settings JSON in Pi's editor and persist valid edits. */
-async function editSettings(ctx: ExtensionCommandContext): Promise<void> {
+async function editSettings(
+  ctx: ExtensionCommandContext,
+  controllers?: CoreSettingsControllers,
+): Promise<void> {
   const path = coreSettingsPath(ctx.cwd);
   if (!ctx.hasUI) {
     ctx.ui.notify(`edit ${path} directly to modify core settings`, "info");
@@ -129,6 +132,7 @@ async function editSettings(ctx: ExtensionCommandContext): Promise<void> {
   }
 
   await writeCoreSettings(ctx.cwd, settings);
+  if (controllers) await controllers.permissions.reload(ctx);
   ctx.ui.notify("[core-settings] config updated", "info");
 }
 
@@ -157,16 +161,24 @@ async function openCoreSettingsSelector(
       const items: SettingItem[] = [
         {
           id: "permissions-mode",
-          label: "Permissions mode",
-          description: "Tool gating policy (interactive sessions only; headless runs open).",
+          label: "Project permissions mode",
+          description:
+            "Persist the active project-local mode (interactive sessions only; headless runs open).",
           currentValue: controllers.permissions.getMode(),
           values: [...MODES],
         },
         actionItem(
-          "permissions-config",
-          "Permissions config",
-          "configure",
-          "Edit permission rules and remembered grants as validated JSON.",
+          "permissions-config-local",
+          "Local permissions config",
+          "edit",
+          "Edit project-local permission rules and remembered grants as validated JSON.",
+          done,
+        ),
+        actionItem(
+          "permissions-config-global",
+          "Global permissions defaults",
+          "edit",
+          "Edit global default mode, rules, and remembered grants as validated JSON.",
           done,
         ),
         {
@@ -309,8 +321,12 @@ async function runAction(
   controllers: CoreSettingsControllers,
   id: string,
 ): Promise<void> {
-  if (id === "permissions-config") {
-    await controllers.permissions.editConfig(ctx);
+  if (id === "permissions-config-local") {
+    await controllers.permissions.editConfig(ctx, "local");
+    return;
+  }
+  if (id === "permissions-config-global") {
+    await controllers.permissions.editConfig(ctx, "global");
     return;
   }
   if (id === "history-search-shortcut") {
@@ -330,7 +346,7 @@ async function runAction(
     return;
   }
   if (id === "json-edit") {
-    await editSettings(ctx);
+    await editSettings(ctx, controllers);
   }
 }
 

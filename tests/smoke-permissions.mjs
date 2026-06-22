@@ -6,7 +6,7 @@
 //
 // Does NOT require a running Pi process or filesystem interaction beyond a tmpdir.
 
-import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -23,6 +23,7 @@ import {
 } from "../extensions/core/extensions/permissions/bash.ts";
 import {
   decide,
+  decideScoped,
   isBashEnvAccess,
   isEnvBasename,
   isWithinDir,
@@ -142,7 +143,7 @@ console.log("\n2. open mode");
     "open: read .env → deny (default-deny)",
   );
 
-  // .env overrideable by explicit config allow
+  // .env cannot be overridden in open mode; open has no config rule block.
   const stateWithAllow = makeState({
     mode: "open",
     rules: [{ tool: "*", action: "allow", pattern: "\\.env$" }],
@@ -156,11 +157,10 @@ console.log("\n2. open mode");
       pathTarget(ENV_PATH, true),
       CWD,
     ),
-    "allow",
-    "open: .env with explicit allow rule → allow",
+    "deny",
+    "open: .env with explicit allow rule → deny",
   );
 
-  // .env.example allowed via rule
   const stateWithExample = makeState({
     mode: "open",
     rules: [{ tool: "*", action: "allow", pattern: "\\.env\\.example$" }],
@@ -174,8 +174,8 @@ console.log("\n2. open mode");
       pathTarget(ENV_EXAMPLE_PATH, true),
       CWD,
     ),
-    "allow",
-    "open: .env.example with allow rule → allow",
+    "deny",
+    "open: .env.example with allow rule → deny",
   );
 }
 
@@ -469,7 +469,8 @@ console.log("\n6. persistence (read/write/compile)");
     assertEqual(read.remembered.length, 1, "persisted grant round-trips");
     assertEqual(read.remembered[0].dirPrefix, "/project/src", "persisted grant dirPrefix");
 
-    // Malformed centralized JSON → built-in defaults.
+    // Malformed centralized JSON with no project-local permissions → built-in defaults.
+    rmSync(join(tmpDir, ".pi"), { recursive: true, force: true });
     writeFileSync(join(tmpAgentDir, "poo", "core-settings.json"), "{ bad json");
     const fallback = await readPermissionState(tmpDir);
     assertEqual(fallback.mode, "trusted", "malformed core settings JSON → built-in default mode");
@@ -485,7 +486,7 @@ console.log("\n6. persistence (read/write/compile)");
     assertEqual(withBadRegex.rules.length, 1, "invalid regex rule is dropped");
 
     // validateConfig: valid
-    const valid = validateConfig({ mode: "safe", rules: [], remembered: [] });
+    const valid = validateConfig({ mode: "safe", safe: { rules: [], remembered: [] } });
     assert(typeof valid === "object", "validateConfig: valid config returns state");
 
     // validateConfig: invalid mode
@@ -523,16 +524,183 @@ console.log("\n6. persistence (read/write/compile)");
     assertEqual(liveState.mode, "safe", "/permissions safe updates live mode");
     assertEqual(
       (await readPermissionState(tmpDir)).mode,
-      "trusted",
-      "/permissions safe does not change default mode",
+      "safe",
+      "/permissions safe persists the project-local active mode",
+    );
+
+    // Command surfaces choose edit targets and block untrusted local edits.
+    let editorTitle;
+    await handler("edit global", {
+      hasUI: true,
+      cwd: tmpDir,
+      signal: undefined,
+      isProjectTrusted: () => true,
+      ui: {
+        editor: async (title) => {
+          editorTitle = title;
+          return undefined;
+        },
+        notify: () => {},
+        setStatus: () => {},
+      },
+    });
+    assert(editorTitle.includes("global"), "/permissions edit global opens the global editor");
+
+    let blockedLocalEdit = false;
+    await handler("edit local", {
+      hasUI: true,
+      cwd: tmpDir,
+      signal: undefined,
+      isProjectTrusted: () => false,
+      ui: {
+        editor: async () => {
+          throw new Error("local editor should be blocked when untrusted");
+        },
+        notify: (_message, level) => {
+          blockedLocalEdit ||= level === "warning";
+        },
+        setStatus: () => {},
+      },
+    });
+    assert(blockedLocalEdit, "/permissions edit local is blocked for untrusted projects");
+
+    let defaultShadowNotice;
+    await handler("default trusted", {
+      hasUI: false,
+      cwd: tmpDir,
+      signal: undefined,
+      isProjectTrusted: () => true,
+      ui: {
+        notify: (message, level) => {
+          defaultShadowNotice = `${level}:${message}`;
+        },
+        setStatus: () => {},
+      },
+    });
+    assert(
+      defaultShadowNotice?.includes("warning:permissions") &&
+        defaultShadowNotice.includes("shadows"),
+      "/permissions default warns when a project-local mode shadows it",
     );
 
     // Remembered grants persist without promoting the live mode to the saved default.
     liveState.remembered.push({ tool: "bash", pattern: "^npm\\b", regex: /^npm\b/ });
     await writePermissionRulesAndGrants(tmpDir, liveState);
     const withGrant = await readPermissionState(tmpDir);
-    assertEqual(withGrant.mode, "trusted", "grant persistence preserves default mode");
+    assertEqual(withGrant.mode, "safe", "grant persistence preserves project-local active mode");
     assertEqual(withGrant.remembered.length, 1, "grant persistence writes remembered grants");
+  } finally {
+    if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+    else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
+    rmSync(tmpDir, { recursive: true });
+    rmSync(tmpAgentDir, { recursive: true });
+  }
+}
+
+// ── Section 6b: scoped merge loader ──────────────────────────────────────────
+console.log("\n6b. scoped merge loader");
+
+{
+  const tmpDir = mkdtempSync(join(tmpdir(), "poo-pi-permissions-"));
+  const tmpAgentDir = mkdtempSync(join(tmpdir(), "poo-pi-agent-"));
+  const oldAgentDir = process.env.PI_CODING_AGENT_DIR;
+  process.env.PI_CODING_AGENT_DIR = tmpAgentDir;
+
+  try {
+    mkdirSync(join(tmpAgentDir, "poo"), { recursive: true });
+    mkdirSync(join(tmpDir, ".pi", "poo"), { recursive: true });
+    writeFileSync(
+      join(tmpAgentDir, "poo", "core-settings.json"),
+      JSON.stringify({
+        version: 1,
+        permissions: {
+          mode: "trusted",
+          trusted: {
+            rules: [{ tool: "read", action: "deny", pattern: "secret" }],
+            remembered: [{ tool: "write", dirPrefix: "/global" }],
+          },
+        },
+      }),
+    );
+    writeFileSync(
+      join(tmpDir, ".pi", "poo", "core-settings.json"),
+      JSON.stringify({
+        version: 1,
+        permissions: {
+          mode: "trusted",
+          trusted: {
+            rules: [{ tool: "read", action: "allow", pattern: "secret" }],
+            remembered: [{ tool: "write", dirPrefix: "/project" }],
+          },
+        },
+      }),
+    );
+
+    const merged = await readPermissionState(tmpDir, true);
+    assertEqual(merged.mode, "trusted", "merge: project mode is active");
+    assertEqual(
+      merged.metadata?.modeSource,
+      "project",
+      "merge: metadata records project mode source",
+    );
+    assertEqual(
+      merged.metadata?.counts.overriddenRules.length,
+      1,
+      "merge: same-identity project rule replaces global rule",
+    );
+    assertEqual(
+      decideScoped(
+        merged.mode,
+        merged.projectScope,
+        merged.globalScope,
+        "read",
+        pathTarget("/project/secret.txt", false),
+        tmpDir,
+      ),
+      "allow",
+      "merge: project allow overrides same-identity global deny",
+    );
+
+    const untrusted = await readPermissionState(tmpDir, false);
+    assertEqual(untrusted.mode, "trusted", "untrusted project: global mode remains active");
+    assertEqual(
+      untrusted.metadata?.ignoredProjectReason,
+      "project is not trusted",
+      "untrusted project: metadata records ignored local scope",
+    );
+    assertEqual(
+      decideScoped(
+        untrusted.mode,
+        untrusted.projectScope,
+        untrusted.globalScope,
+        "read",
+        pathTarget("/project/secret.txt", false),
+        tmpDir,
+      ),
+      "deny",
+      "untrusted project: ignored local allow cannot override global deny",
+    );
+
+    const permissiveScope = makeState({
+      mode: "permissive",
+      rules: [
+        { tool: "bash", action: "ask", pattern: "^docker\\b" },
+        { tool: "bash", action: "allow", pattern: "^docker\\b" },
+      ],
+      remembered: [{ tool: "bash", pattern: "^docker\\s+ps\\b" }],
+    });
+    assertEqual(
+      decideScoped(
+        "permissive",
+        { rules: permissiveScope.rules, remembered: permissiveScope.remembered },
+        { rules: [], remembered: [] },
+        "bash",
+        bashTarget("docker ps"),
+        tmpDir,
+      ),
+      "ask",
+      "scoped permissive: ask rule overrides allow rules and grants",
+    );
   } finally {
     if (oldAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
     else process.env.PI_CODING_AGENT_DIR = oldAgentDir;
@@ -627,6 +795,19 @@ console.log("\n8. bash Always grant multi-line editor");
         state.remembered[0]?.pattern,
         "^rg\\s+permissions\\b",
         "bash Always single: saved pattern matches prefill",
+      );
+      const saved = JSON.parse(
+        readFileSync(join(tmpDir, ".pi", "poo", "core-settings.json"), "utf8"),
+      );
+      assertEqual(
+        saved.permissions.mode,
+        undefined,
+        "bash Always single: local grant write does not pin project mode",
+      );
+      assertEqual(
+        saved.permissions.safe.remembered[0].pattern,
+        "^rg\\s+permissions\\b",
+        "bash Always single: local grant writes active mode block",
       );
     }
 
@@ -1132,8 +1313,8 @@ console.log("\n15. permissive mode");
       bashTarget("docker ps"),
       CWD,
     ),
-    "allow",
-    "permissive: grant overrides ask rule → allow",
+    "ask",
+    "permissive: ask rule overrides remembered grant → ask",
   );
 
   // Allow rule overrides ask (allow-before-ask)
@@ -1153,8 +1334,8 @@ console.log("\n15. permissive mode");
       bashTarget("docker ps"),
       CWD,
     ),
-    "allow",
-    "permissive: allow rule overrides ask rule (allow-before-ask precedence)",
+    "ask",
+    "permissive: ask rule overrides allow rule (ask-before-allow precedence)",
   );
 
   // Config deny still denies

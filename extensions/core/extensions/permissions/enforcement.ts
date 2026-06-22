@@ -9,8 +9,8 @@ import type {
 } from "@earendil-works/pi-coding-agent";
 
 import { deriveBashPatterns } from "./bash.ts";
-import { decide, isBashEnvAccess, isEnvBasename } from "./policy.ts";
-import { addGrant, writePermissionRulesAndGrants } from "./persistence.ts";
+import { decide, decideScoped, isBashEnvAccess, isEnvBasename } from "./policy.ts";
+import { addGrant, appendLocalRememberedGrants } from "./persistence.ts";
 import type {
   BashTarget,
   CompiledGrant,
@@ -179,8 +179,17 @@ export async function askOperator(
   }
 
   if (choice === "Always For This Project") {
+    if (!isTrustedForLocalPermissions(ctx)) {
+      ctx.ui.notify(
+        "[permissions] project grants are disabled until this project is trusted",
+        "warning",
+      );
+      return undefined;
+    }
+
     const grants = deriveGrant(toolName, target);
     if (grants.length === 0) return undefined;
+    const saved: CompiledGrant[] = [];
 
     if (target.kind === "bash") {
       // Multi-line editor: one pattern per line for compound commands.
@@ -210,19 +219,26 @@ export async function askOperator(
           return undefined;
         }
       }
-      for (const g of compiled) addGrant(state, g);
+      saved.push(...compiled);
     } else {
       // Path tool: single directory-prefix grant, no editor
-      for (const g of grants) addGrant(state, g);
+      saved.push(...grants);
     }
 
-    await writePermissionRulesAndGrants(ctx.cwd, state);
+    for (const g of saved) addGrant(state, g);
+    await appendLocalRememberedGrants(ctx.cwd, state.mode, saved);
     return undefined;
   }
 
   // Deny (explicit "Deny" or undefined from cancel/escape)
   const note = await ctx.ui.input("Reason for denying (optional)", "", { signal: ctx.signal });
   return { block: true, reason: note || "denied by operator" };
+}
+
+/** Return whether local permission writes are allowed for this context. */
+function isTrustedForLocalPermissions(ctx: ExtensionContext): boolean {
+  const maybeCtx = ctx as ExtensionContext & { isProjectTrusted?: () => boolean };
+  return maybeCtx.isProjectTrusted?.() ?? true;
 }
 
 /** Build a short human-readable label for the permission dialog. */
@@ -259,7 +275,17 @@ export function buildToolCallHandler(
       const target = await mapTargetAndNormalize(event, ctx.cwd);
       // Headless sessions behave as open mode by design (documented decision).
       const mode = ctx.hasUI ? state.mode : "open";
-      const d = decide(mode, state.rules, state.remembered, event.toolName, target, ctx.cwd);
+      const d =
+        state.projectScope && state.globalScope
+          ? decideScoped(
+              mode,
+              state.projectScope,
+              state.globalScope,
+              event.toolName,
+              target,
+              ctx.cwd,
+            )
+          : decide(mode, state.rules, state.remembered, event.toolName, target, ctx.cwd);
 
       if (d === "allow") return undefined;
       if (d === "deny") return { block: true, reason: denyReason(target) };

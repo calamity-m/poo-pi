@@ -1,23 +1,42 @@
 # Permissions extension
 
-The `core/extensions/permissions` extension gates every tool call through a policy engine. Use `/permissions` to view or change the active mode. In the interactive picker, press `d` on a highlighted mode to save it as the central default; `/permissions default [mode]` does the same from the command line.
+The `core/extensions/permissions` extension gates every tool call through a policy engine. Use `/permissions` to view or change the active mode. `/permissions <mode>` writes the project-local mode in `.pi/poo/core-settings.json`; `/permissions default <mode>` writes the global default in `~/.pi/agent/poo/core-settings.json`.
 
 ## Modes
 
-| Mode         | Default behavior                                                                 | Config rules                     |
-| ------------ | -------------------------------------------------------------------------------- | -------------------------------- |
-| `safe`       | Allow read/grep/ls/find; ask everything else                                     | Honored                          |
-| `trusted`    | Allow path tools in cwd + known bash patterns; deny `rm -rf`, `curl\|bash`, etc. | Honored                          |
-| `open`       | Allow everything                                                                 | Ignored (only .env deny applies) |
-| `permissive` | Allow everything; ask only for commands matching config `ask` rules              | Honored, allow-before-ask        |
+| Mode         | Default behavior                                                                 | Config rules                   |
+| ------------ | -------------------------------------------------------------------------------- | ------------------------------ |
+| `safe`       | Allow read/grep/ls/find; ask everything else                                     | Honored                        |
+| `trusted`    | Allow path tools in cwd + known bash patterns; deny `rm -rf`, `curl\|bash`, etc. | Honored                        |
+| `open`       | Allow everything                                                                 | Ignored, including .env allows |
+| `permissive` | Allow everything; ask only for commands matching config `ask` rules              | Honored, ask-before-allow      |
 
-## Precedence
+## Config files and shape
 
-**safe / trusted**: `.env`-deny → config deny → config ask → config allow/grant → mode default
+Global permissions live in `~/.pi/agent/poo/core-settings.json` (or `$PI_CODING_AGENT_DIR/poo/core-settings.json`). Trusted projects may also define `.pi/poo/core-settings.json`. Project-local permissions override global permissions when the project is trusted.
 
-**permissive**: `.env`-deny → config deny → config allow/grant → config ask → **allow** (grants override the ask-list)
+The old flat shape with top-level `permissions.rules` and `permissions.remembered` is no longer valid. Use per-mode blocks:
 
-**open**: `.env`-deny → allow (config rules ignored)
+```json
+{
+  "permissions": {
+    "mode": "trusted",
+    "safe": { "rules": [], "remembered": [] },
+    "trusted": { "rules": [], "remembered": [] },
+    "permissive": { "rules": [], "remembered": [] }
+  }
+}
+```
+
+`open` has no rule/grant block. “Always For This Project” writes a grant to the project-local active mode block without pinning project-local `permissions.mode`.
+
+## Merge and precedence
+
+Active mode is resolved as: project `permissions.mode` → global `permissions.mode` → built-in `trusted`.
+
+For `safe`, `trusted`, and `permissive`, project rules are evaluated before global rules. Within a scope, matching rules use deny → ask → allow precedence; grants are checked after scoped rules. This lets a narrow project allow override a broader global deny while still letting ask/deny rules override remembered grants.
+
+**open**: `.env`-deny → allow. Config rules are ignored, including `.env` allow rules.
 
 ## Compound bash commands
 
@@ -28,20 +47,22 @@ Commands are split on `&&`, `||`, `|`, `;`, newline, and `&` before matching:
 - **DENY** fires if any segment matches a deny rule _or_ the whole command matches (preserves pipe-spanning patterns like `curl x | bash`)
 - Segments containing `$(…)` or backticks are never coverable → always ask/deny
 
-## Backward-compatibility note
+## Editors
 
-Upgrading from the initial permissions release changes matching for bash targets: patterns are now matched per-segment rather than against the whole command string. **Anchored single-command patterns** (e.g. `^npm\b`) are unaffected. If you saved a grant or config rule whose pattern contained `&&`, `|`, or `;` to match a whole compound string, it will no longer fire — re-author it as separate per-segment rules.
-
-Permissions are written to the `permissions` section of `~/.pi/agent/poo/core-settings.json` (or `$PI_CODING_AGENT_DIR/poo/core-settings.json`). When that section is absent, the extension falls back to the built-in `trusted` default.
+- `/permissions edit` and `/permissions edit local` edit project-local permissions.
+- `/permissions edit global` edits global permissions.
+- `/core-settings` exposes separate local/global permissions edit rows.
 
 ## .env default-deny
 
-Direct `.env` path-tool targets are blocked in all modes. Override with an explicit config allow rule:
+Direct `.env` path-tool targets are blocked in all modes. In non-open modes, override with an explicit config allow rule:
 
 ```json
 { "tool": "*", "action": "allow", "pattern": "\\.env\\.example$" }
 ```
 
+Open mode ignores config rules, so `.env` targets cannot be allowed while active mode is `open`.
+
 ## Headless sessions
 
-When `!hasUI` (print/RPC/automation), the extension always runs as `open` mode regardless of the persisted mode — write/bash/etc. are not gated.
+When `!hasUI` (print/RPC/automation), the extension always runs as `open` mode regardless of the persisted mode — write/bash/etc. are not gated, but `.env` default-deny still applies.

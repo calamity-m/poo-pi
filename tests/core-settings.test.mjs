@@ -12,7 +12,11 @@ import {
   validateWorktreeSection,
   writeCoreSettings,
 } from "../extensions/core/config/persistence.ts";
-import { coreSettingsPath } from "../extensions/core/config/paths.ts";
+import {
+  coreSettingsPath,
+  globalCoreSettingsPath,
+  projectCoreSettingsPath,
+} from "../extensions/core/config/paths.ts";
 
 const validSubagents = {
   fast: { model: "anthropic/claude-haiku", thinkingLevel: "off" },
@@ -114,9 +118,84 @@ test("validateWorktreeSection rejects non-objects and empty roots", () => {
   assert.match(validateWorktreeSection({ root: 5 }), /worktrees.root/);
 });
 
-test("core settings path uses the package namespace under the agent dir", async () => {
+test("parseCoreSettings retains nested permissions config", () => {
+  assert.deepEqual(
+    parseCoreSettings({
+      version: 1,
+      permissions: {
+        mode: "trusted",
+        trusted: {
+          rules: [{ tool: "bash", action: "deny", pattern: "rm\\s+-rf" }],
+          remembered: [{ tool: "write", dirPrefix: "/repo/src" }],
+        },
+      },
+    })?.permissions,
+    {
+      mode: "trusted",
+      trusted: {
+        rules: [{ tool: "bash", action: "deny", pattern: "rm\\s+-rf" }],
+        remembered: [{ tool: "write", dirPrefix: "/repo/src" }],
+      },
+    },
+  );
+});
+
+test("parseCoreSettings accepts partial permissions blocks without pinning mode", () => {
+  assert.deepEqual(
+    parseCoreSettings({
+      version: 1,
+      permissions: { safe: { rules: [{ tool: "read", action: "ask", pattern: "secret" }] } },
+    })?.permissions,
+    { safe: { rules: [{ tool: "read", action: "ask", pattern: "secret" }] } },
+  );
+});
+
+test("validateCoreSettings rejects flat permissions rules and remembered", () => {
+  assert.match(
+    validateCoreSettings({ version: 1, permissions: { mode: "trusted", rules: [] } }),
+    /permissions\.<mode>\.rules/,
+  );
+  assert.match(
+    validateCoreSettings({ version: 1, permissions: { mode: "trusted", remembered: [] } }),
+    /permissions\.<mode>\.remembered/,
+  );
+});
+
+test("validateCoreSettings rejects invalid permission rule fields and regexes", () => {
+  assert.match(
+    validateCoreSettings({
+      version: 1,
+      permissions: { trusted: { rules: [{ tool: "bash", action: "block", pattern: ".*" }] } },
+    }),
+    /action/,
+  );
+  assert.match(
+    validateCoreSettings({
+      version: 1,
+      permissions: { trusted: { remembered: [{ tool: "bash", pattern: "[bad" }] } },
+    }),
+    /valid regex/,
+  );
+});
+
+test("validateCoreSettings accepts open mode without a mode block", () => {
+  const result = validateCoreSettings({ version: 1, permissions: { mode: "open" } });
+  assert.notEqual(typeof result, "string");
+  assert.deepEqual(typeof result === "string" ? undefined : result.permissions, { mode: "open" });
+});
+
+test("validateCoreSettings rejects an open permissions block", () => {
+  assert.match(
+    validateCoreSettings({ version: 1, permissions: { mode: "open", open: { rules: [] } } }),
+    /permissions\.open/,
+  );
+});
+
+test("core settings paths distinguish global and project-local files", async () => {
   await withTempAgentDir(async (cwd) => {
     assert.equal(coreSettingsPath(cwd), join(cwd, "agent", "poo", "core-settings.json"));
+    assert.equal(globalCoreSettingsPath(), join(cwd, "agent", "poo", "core-settings.json"));
+    assert.equal(projectCoreSettingsPath(cwd), join(cwd, ".pi", "poo", "core-settings.json"));
   });
 });
 

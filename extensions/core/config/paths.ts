@@ -1,6 +1,9 @@
 import { homedir } from "node:os";
 import { join } from "node:path";
 
+/** Project-local Pi config directory; replace with Pi's public CONFIG_DIR_NAME when exported. */
+export const PROJECT_CONFIG_DIR_NAME = ".pi";
+
 /** Package-owned settings directory below Pi's user-scoped agent directory. */
 export const CORE_CONFIG_DIR_NAME = "poo";
 
@@ -25,4 +28,14 @@ export function coreSettingsPath(_cwd?: string): string {
 /** Return the centralized core settings path used for package defaults. */
 export function globalCoreSettingsPath(): string {
   return coreSettingsPath();
+}
+
+/** Return the project-local package-owned config directory for a cwd. */
+export function projectCoreConfigDirPath(cwd: string): string {
+  return join(cwd, PROJECT_CONFIG_DIR_NAME, CORE_CONFIG_DIR_NAME);
+}
+
+/** Return the project-local core settings path for permissions overrides. */
+export function projectCoreSettingsPath(cwd: string): string {
+  return join(projectCoreConfigDirPath(cwd), CORE_SETTINGS_FILE_NAME);
 }

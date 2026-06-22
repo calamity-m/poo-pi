@@ -3,7 +3,9 @@ import { mkdir, readFile, writeFile } from "node:fs/promises";
 import { dirname } from "node:path";
 
 import type { RedactionMode } from "../extensions/proxy/types.ts";
+import { NON_OPEN_PERMISSION_MODES } from "../extensions/permissions/types.ts";
 import type {
+  ModePermissionConfig,
   PermissionMode,
   PersistedPermissionConfig,
   RememberedGrant,
@@ -11,7 +13,7 @@ import type {
   RuleAction,
 } from "../extensions/permissions/types.ts";
 import { createDefaultCoreSettings } from "./defaults.ts";
-import { coreSettingsPath, globalCoreSettingsPath } from "./paths.ts";
+import { coreSettingsPath, globalCoreSettingsPath, projectCoreSettingsPath } from "./paths.ts";
 import type {
   CoreFooterSettings,
   CoreHistorySearchSettings,
@@ -30,6 +32,11 @@ export async function readGlobalCoreSettings(): Promise<CoreSettings> {
   return await readCoreSettingsFile(globalCoreSettingsPath());
 }
 
+/** Read project-local core settings from `<cwd>/.pi/poo/core-settings.json`. */
+export async function readProjectCoreSettings(cwd: string): Promise<CoreSettings> {
+  return await readCoreSettingsFile(projectCoreSettingsPath(cwd));
+}
+
 /** Validate and persist centralized core settings to `~/.pi/agent/poo/core-settings.json`. */
 export async function writeCoreSettings(
   cwd: string | undefined,
@@ -41,6 +48,11 @@ export async function writeCoreSettings(
 /** Validate and persist centralized core settings to `~/.pi/agent/poo/core-settings.json`. */
 export async function writeGlobalCoreSettings(settings: CoreSettings): Promise<void> {
   await writeCoreSettingsFile(globalCoreSettingsPath(), settings);
+}
+
+/** Validate and persist project-local core settings to `<cwd>/.pi/poo/core-settings.json`. */
+export async function writeProjectCoreSettings(cwd: string, settings: CoreSettings): Promise<void> {
+  await writeCoreSettingsFile(projectCoreSettingsPath(cwd), settings);
 }
 
 /** Read the permissions section from centralized core settings. */
@@ -55,6 +67,13 @@ export async function readGlobalCorePermissionConfig(): Promise<
   PersistedPermissionConfig | undefined
 > {
   return (await readGlobalCoreSettings()).permissions;
+}
+
+/** Read project-local permissions from `<cwd>/.pi/poo/core-settings.json`. */
+export async function readProjectCorePermissionConfig(
+  cwd: string,
+): Promise<PersistedPermissionConfig | undefined> {
+  return (await readProjectCoreSettings(cwd)).permissions;
 }
 
 /** Persist the permissions section in centralized core settings. */
@@ -74,6 +93,16 @@ export async function writeGlobalCorePermissionConfig(
   const settings = await readGlobalCoreSettings();
   settings.permissions = permissions;
   await writeGlobalCoreSettings(settings);
+}
+
+/** Persist project-local permissions without disturbing other local settings. */
+export async function writeProjectCorePermissionConfig(
+  cwd: string,
+  permissions: PersistedPermissionConfig,
+): Promise<void> {
+  const settings = await readProjectCoreSettings(cwd);
+  settings.permissions = permissions;
+  await writeProjectCoreSettings(cwd, settings);
 }
 
 /** Read proxy audit redaction mode from centralized core settings. */
@@ -236,16 +265,27 @@ async function readJson(path: string): Promise<unknown | undefined> {
 }
 
 /** Validate the permissions section when present in edited core settings. */
-function validatePermissionSection(value: unknown): string | undefined {
+export function validatePermissionSection(value: unknown): string | undefined {
   if (value === undefined) return undefined;
   if (!isRecord(value)) return '"permissions" must be an object';
-  if (!isPermissionMode(value["mode"])) {
+  if (value["mode"] !== undefined && !isPermissionMode(value["mode"])) {
     return '"permissions.mode" must be "safe", "trusted", "open", or "permissive"';
   }
-  if (value["rules"] !== undefined && !Array.isArray(value["rules"]))
-    return '"permissions.rules" must be an array';
-  if (value["remembered"] !== undefined && !Array.isArray(value["remembered"]))
-    return '"permissions.remembered" must be an array';
+  if (value["rules"] !== undefined) {
+    return 'flat "permissions.rules" is no longer supported; use "permissions.<mode>.rules" (for example "permissions.trusted.rules")';
+  }
+  if (value["remembered"] !== undefined) {
+    return 'flat "permissions.remembered" is no longer supported; use "permissions.<mode>.remembered" (for example "permissions.trusted.remembered")';
+  }
+  if (value["open"] !== undefined) {
+    return '"permissions.open" is not supported; open mode has no configurable rule block';
+  }
+  for (const mode of NON_OPEN_PERMISSION_MODES) {
+    const block = value[mode];
+    if (block === undefined) continue;
+    const blockError = validateModePermissionBlock(block, `permissions.${mode}`);
+    if (blockError) return blockError;
+  }
   return undefined;
 }
 
@@ -346,14 +386,89 @@ function parseFooterSettings(value: unknown): CoreFooterSettings | undefined {
 }
 
 /** Parse the permissions section without compiling regexes. */
-function parsePermissionConfig(value: unknown): PersistedPermissionConfig | undefined {
+export function parsePermissionConfig(value: unknown): PersistedPermissionConfig | undefined {
   if (!isRecord(value)) return undefined;
-  const mode = isPermissionMode(value["mode"]) ? value["mode"] : undefined;
-  if (!mode) return undefined;
+  const out: PersistedPermissionConfig = {};
+  if (isPermissionMode(value["mode"])) out.mode = value["mode"];
+  for (const mode of NON_OPEN_PERMISSION_MODES) {
+    const block = parseModePermissionBlock(value[mode]);
+    if (block) out[mode] = block;
+  }
+  return out.mode || out.safe || out.trusted || out.permissive ? out : undefined;
+}
+
+/** Validate one non-open mode block. */
+function validateModePermissionBlock(value: unknown, path: string): string | undefined {
+  if (!isRecord(value)) return `"${path}" must be an object`;
+  if (value["rules"] !== undefined) {
+    if (!Array.isArray(value["rules"])) return `"${path}.rules" must be an array`;
+    const rulesError = validateRules(value["rules"], `${path}.rules`);
+    if (rulesError) return rulesError;
+  }
+  if (value["remembered"] !== undefined) {
+    if (!Array.isArray(value["remembered"])) return `"${path}.remembered" must be an array`;
+    const rememberedError = validateRemembered(value["remembered"], `${path}.remembered`);
+    if (rememberedError) return rememberedError;
+  }
+  return undefined;
+}
+
+/** Validate raw permission rules before accepting edited config. */
+function validateRules(value: unknown[], path: string): string | undefined {
+  for (const [index, item] of value.entries()) {
+    const itemPath = `${path}[${index}]`;
+    if (!isRecord(item)) return `"${itemPath}" must be an object`;
+    if (typeof item["tool"] !== "string") return `"${itemPath}.tool" must be a string`;
+    if (!isRuleAction(item["action"])) return `"${itemPath}.action" must be allow, ask, or deny`;
+    if (typeof item["pattern"] !== "string") return `"${itemPath}.pattern" must be a string`;
+    const regexError = validateRegex(item["pattern"], `${itemPath}.pattern`);
+    if (regexError) return regexError;
+  }
+  return undefined;
+}
+
+/** Validate raw remembered grants before accepting edited config. */
+function validateRemembered(value: unknown[], path: string): string | undefined {
+  for (const [index, item] of value.entries()) {
+    const itemPath = `${path}[${index}]`;
+    if (!isRecord(item)) return `"${itemPath}" must be an object`;
+    if (typeof item["tool"] !== "string") return `"${itemPath}.tool" must be a string`;
+    const hasDir = item["dirPrefix"] !== undefined;
+    const hasPattern = item["pattern"] !== undefined;
+    if (hasDir && typeof item["dirPrefix"] !== "string") {
+      return `"${itemPath}.dirPrefix" must be a string`;
+    }
+    if (hasPattern && typeof item["pattern"] !== "string") {
+      return `"${itemPath}.pattern" must be a string`;
+    }
+    if (!hasDir && !hasPattern) return `"${itemPath}" must include dirPrefix or pattern`;
+    if (typeof item["pattern"] === "string") {
+      const regexError = validateRegex(item["pattern"], `${itemPath}.pattern`);
+      if (regexError) return regexError;
+    }
+  }
+  return undefined;
+}
+
+/** Validate a regex pattern string without retaining the compiled object. */
+function validateRegex(pattern: string, path: string): string | undefined {
+  try {
+    new RegExp(pattern);
+    return undefined;
+  } catch (error) {
+    return `"${path}" must be a valid regex (${error instanceof Error ? error.message : String(error)})`;
+  }
+}
+
+/** Parse one non-open mode block, dropping invalid fields. */
+function parseModePermissionBlock(value: unknown): ModePermissionConfig | undefined {
+  if (!isRecord(value)) return undefined;
+  const rules = parseRules(value["rules"]);
+  const remembered = parseRemembered(value["remembered"]);
+  if (rules.length === 0 && remembered.length === 0) return {};
   return {
-    mode,
-    rules: parseRules(value["rules"]),
-    remembered: parseRemembered(value["remembered"]),
+    ...(rules.length > 0 ? { rules } : {}),
+    ...(remembered.length > 0 ? { remembered } : {}),
   };
 }
 

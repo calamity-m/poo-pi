@@ -26,8 +26,10 @@ export interface PermissionsController {
   getMode(): PermissionMode;
   /** Set and persist the mode, mutating the shared live state in place. */
   setMode(ctx: ExtensionCommandContext, mode: PermissionMode): Promise<void>;
-  /** Open the validated permissions JSON editor against the shared live state. */
-  editConfig(ctx: ExtensionCommandContext): Promise<void>;
+  /** Open the validated permissions JSON editor against local or global permissions. */
+  editConfig(ctx: ExtensionCommandContext, scope?: "local" | "global"): Promise<void>;
+  /** Reload permissions from disk into the shared live state. */
+  reload(ctx: ExtensionContext): Promise<void>;
 }
 
 /**
@@ -35,7 +37,7 @@ export interface PermissionsController {
  * in the same Node process so the active mode and grants survive `/reload` and `/new`.
  *
  * The inner `state` field starts as a placeholder; `reloadState` is called on
- * `session_start` to load the real config from `~/.pi/agent/poo/core-settings.json`.
+ * `session_start` to load the effective global/project permissions config.
  */
 function getPermissionsGlobal(): { state: PermissionState; notifiedRef: [boolean] } {
   const scope = globalThis as typeof globalThis & {
@@ -74,9 +76,7 @@ export function registerPermissions(pi: ExtensionAPI): PermissionsController {
   const load = async (ctx: ExtensionContext): Promise<void> => {
     const loaded = await reloadState(ctx);
     // Update in-place so handler closures see the new state
-    global.state.mode = loaded.mode;
-    global.state.rules = loaded.rules;
-    global.state.remembered = loaded.remembered;
+    Object.assign(global.state, loaded);
     // Reset the degraded-notify flag on reload so fresh errors surface again
     global.notifiedRef[0] = false;
     ctx.ui.setStatus(STATUS_KEY, `perm:${global.state.mode}`);
@@ -94,6 +94,7 @@ export function registerPermissions(pi: ExtensionAPI): PermissionsController {
     setMode: async (ctx, mode) => {
       await applyPermissionMode(ctx, global.state, mode);
     },
-    editConfig: (ctx) => editPermissionConfig(ctx, global.state),
+    editConfig: (ctx, scope = "local") => editPermissionConfig(ctx, global.state, scope),
+    reload: load,
   };
 }

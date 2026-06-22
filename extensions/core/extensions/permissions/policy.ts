@@ -10,10 +10,12 @@ import {
 } from "./bash.ts";
 import type {
   CompiledGrant,
+  CompiledPermissionScope,
   CompiledRule,
   Decision,
   PermissionMode,
   ResolvedTarget,
+  RuleAction,
 } from "./types.ts";
 
 // ── Mode-default constants ────────────────────────────────────────────────────
@@ -138,6 +140,91 @@ function grantCovers(grant: CompiledGrant, toolName: string, target: ResolvedTar
   return false;
 }
 
+// ── Scoped policy engine ─────────────────────────────────────────────────────
+
+/**
+ * Decide using project/global scopes, evaluating project rules before global
+ * rules so project-local choices can override broader global defaults.
+ */
+export function decideScoped(
+  mode: PermissionMode,
+  projectScope: CompiledPermissionScope,
+  globalScope: CompiledPermissionScope,
+  toolName: string,
+  target: ResolvedTarget,
+  cwd: string,
+): Decision {
+  const isBash = target.kind === "bash";
+  const bashCmd = isBash ? target.command : "";
+  const bashSegs = isBash ? splitBashSegments(target.command) : [];
+  const tStr = targetString(target);
+
+  if (mode === "open") {
+    const isEnvTarget =
+      (target.kind === "path" && target.isEnv) || (target.kind === "bash" && target.isEnvAccess);
+    return isEnvTarget ? "deny" : "allow";
+  }
+
+  const scopes = [projectScope, globalScope];
+  const isEnvTarget =
+    (target.kind === "path" && target.isEnv) || (target.kind === "bash" && target.isEnvAccess);
+  if (
+    isEnvTarget &&
+    !scopes.some((scope) =>
+      scopeRuleMatches(scope.rules, "allow", toolName, target, tStr, bashCmd, bashSegs),
+    )
+  ) {
+    return "deny";
+  }
+
+  for (const scope of scopes) {
+    const action = matchingRuleAction(scope.rules, toolName, target, tStr, bashCmd, bashSegs);
+    if (action) return action;
+  }
+
+  for (const scope of scopes) {
+    for (const grant of scope.remembered) {
+      const covered = isBash
+        ? bashGrantCovers(grant, toolName, bashCmd, bashSegs)
+        : grantCovers(grant, toolName, target);
+      if (covered) return "allow";
+    }
+  }
+
+  if (mode === "permissive") return "allow";
+  return modeDefault(mode, toolName, target, cwd, bashSegs);
+}
+
+/** Return the highest-precedence matching rule action inside one scope. */
+function matchingRuleAction(
+  rules: CompiledRule[],
+  toolName: string,
+  target: ResolvedTarget,
+  tStr: string,
+  bashCmd: string,
+  bashSegs: string[],
+): RuleAction | undefined {
+  for (const action of ["deny", "ask", "allow"] as const) {
+    if (scopeRuleMatches(rules, action, toolName, target, tStr, bashCmd, bashSegs)) return action;
+  }
+  return undefined;
+}
+
+/** Return whether one action matches inside one scope. */
+function scopeRuleMatches(
+  rules: CompiledRule[],
+  action: RuleAction,
+  toolName: string,
+  target: ResolvedTarget,
+  tStr: string,
+  bashCmd: string,
+  bashSegs: string[],
+): boolean {
+  return target.kind === "bash"
+    ? bashRuleMatches(rules, action, toolName, bashCmd, bashSegs)
+    : ruleMatches(rules, action, toolName, tStr);
+}
+
 // ── Policy engine ─────────────────────────────────────────────────────────────
 
 /**
@@ -159,15 +246,14 @@ function grantCovers(grant: CompiledGrant, toolName: string, target: ResolvedTar
  *   4. config ALLOW rule OR remembered grant covers all segs   → ALLOW
  *   5. mode default for (tool, target)                        → allow | ask | deny
  *
- * **open**: allow everything except .env (path or bash isEnvAccess) with no
- * explicit config allow. Config rules are otherwise ignored.
+ * **open**: allow everything except .env (path or bash isEnvAccess). Config
+ * rules are ignored, including .env allow rules.
  *
- * **permissive**: allow-by-default with config rule honoring. Inverted ask/allow
- * ordering vs safe/trusted (grants/allow override ask):
+ * **permissive**: allow-by-default with config rule honoring:
  *   1. .env target (path isEnv or bash isEnvAccess) without explicit config allow → DENY
  *   2. config DENY rule matches                                → DENY
- *   3. config ALLOW rule OR remembered grant covers all segs   → ALLOW  ← before ASK
- *   4. config ASK rule matches                                 → ASK
+ *   3. config ASK rule matches                                 → ASK
+ *   4. config ALLOW rule OR remembered grant covers all segs   → ALLOW
  *   5. default                                                 → ALLOW
  *
  * The caller is responsible for converting `!hasUI` → `"open"` before calling.
@@ -196,10 +282,10 @@ export function decide(
 
   // ── open mode ────────────────────────────────────────────────────────────────
   if (mode === "open") {
-    // open ignores all rules except the .env default-deny
+    // open ignores all rules, including .env allow overrides.
     const isEnvTarget =
       (target.kind === "path" && target.isEnv) || (target.kind === "bash" && target.isEnvAccess);
-    if (isEnvTarget && !ruleMatches(rules, "allow", toolName, tStr)) return "deny";
+    if (isEnvTarget) return "deny";
     return "allow";
   }
 
@@ -221,7 +307,13 @@ export function decide(
       : ruleMatches(rules, "deny", toolName, tStr);
     if (isDenied) return "deny";
 
-    // Step 3: config ALLOW or grant (before ASK — grants override the ask-list in permissive)
+    // Step 3: config ASK
+    const isAsked = isBash
+      ? bashRuleMatches(rules, "ask", toolName, bashCmd, bashSegs)
+      : ruleMatches(rules, "ask", toolName, tStr);
+    if (isAsked) return "ask";
+
+    // Step 4: config ALLOW or grant
     const isAllowed = isBash
       ? bashRuleMatches(rules, "allow", toolName, bashCmd, bashSegs)
       : ruleMatches(rules, "allow", toolName, tStr);
@@ -232,12 +324,6 @@ export function decide(
         : grantCovers(grant, toolName, target);
       if (covered) return "allow";
     }
-
-    // Step 4: config ASK
-    const isAsked = isBash
-      ? bashRuleMatches(rules, "ask", toolName, bashCmd, bashSegs)
-      : ruleMatches(rules, "ask", toolName, tStr);
-    if (isAsked) return "ask";
 
     // Step 5: default → allow
     return "allow";

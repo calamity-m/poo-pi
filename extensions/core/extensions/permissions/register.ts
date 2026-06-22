@@ -1,5 +1,11 @@
 import type { ExtensionAPI, ExtensionCommandContext } from "@earendil-works/pi-coding-agent";
 
+import {
+  readGlobalCorePermissionConfig,
+  readProjectCorePermissionConfig,
+  writeGlobalCorePermissionConfig,
+  writeProjectCorePermissionConfig,
+} from "../../config/persistence.ts";
 import { showInlinePanel, showSelectPanel } from "../../lib/ui/panel.ts";
 import { requestCoreFooterRender } from "../footer.ts";
 import {
@@ -9,15 +15,15 @@ import {
 } from "./policy.ts";
 import {
   configFilePath,
+  createDefaultPermissionConfig,
   defaultConfigFilePath,
   readDefaultPermissionMode,
-  toRawGrants,
-  toRawRules,
+  reloadState,
   validateConfig,
   writeDefaultPermissionMode,
-  writePermissionState,
+  writeProjectPermissionMode,
 } from "./persistence.ts";
-import type { PermissionMode, PermissionState } from "./types.ts";
+import type { PermissionMode, PermissionState, PersistedPermissionConfig } from "./types.ts";
 
 const MODES: PermissionMode[] = ["safe", "trusted", "permissive", "open"];
 
@@ -30,8 +36,8 @@ type PermissionPickerResult =
  *
  * - No args / unknown arg: open mode picker then show showcase.
  * - `safe`, `trusted`, `permissive`, `open`: set mode directly and show showcase.
- * - `edit`: open raw-JSON editor; validate before writing.
- * - `default [mode]`: save the central default mode.
+ * - `edit [local|global]`: open raw-JSON editor for a deliberate settings scope.
+ * - `default [mode]`: save the global default mode.
  *
  * The showcase content is derived from the policy engine's own constants so it
  * cannot drift from actual enforcement behavior.
@@ -43,8 +49,13 @@ export function registerPermissionsCommand(pi: ExtensionAPI, state: PermissionSt
     handler: async (args, ctx) => {
       const sub = args.trim();
 
-      if (sub === "edit") {
-        await editPermissionConfig(ctx, state);
+      if (sub === "edit" || sub === "edit local") {
+        await editPermissionConfig(ctx, state, "local");
+        return;
+      }
+
+      if (sub === "edit global") {
+        await editPermissionConfig(ctx, state, "global");
         return;
       }
 
@@ -61,7 +72,12 @@ export function registerPermissionsCommand(pi: ExtensionAPI, state: PermissionSt
       if (sub.startsWith("default ")) {
         const mode = sub.slice("default ".length).trim();
         if (isPermissionMode(mode)) await saveDefaultMode(ctx, mode);
-        else ctx.ui.notify("usage: /permissions default [safe|trusted|permissive|open]", "warning");
+        else {
+          ctx.ui.notify(
+            "usage: /permissions [safe|trusted|permissive|open|edit [local|global]|default [mode]]",
+            "warning",
+          );
+        }
         return;
       }
 
@@ -139,7 +155,15 @@ function formatModeDescription(
 /** Save the central default mode without changing rules or remembered grants. */
 async function saveDefaultMode(ctx: ExtensionCommandContext, mode: PermissionMode): Promise<void> {
   await writeDefaultPermissionMode(mode);
-  ctx.ui.notify(`permissions: default mode set to ${mode} (${defaultConfigFilePath()})`, "info");
+  const localMode = isTrustedForLocalPermissions(ctx)
+    ? (await readProjectCorePermissionConfig(ctx.cwd))?.mode
+    : undefined;
+  const shadow =
+    localMode && localMode !== mode ? `; project mode ${localMode} still shadows it` : "";
+  ctx.ui.notify(
+    `permissions: global default mode set to ${mode} (${defaultConfigFilePath()})${shadow}`,
+    shadow ? "warning" : "info",
+  );
 }
 
 /** Apply a new live mode and show the policy showcase. */
@@ -163,9 +187,15 @@ export async function applyPermissionMode(
   state: PermissionState,
   mode: PermissionMode,
 ): Promise<void> {
-  state.mode = mode;
-  ctx.ui.setStatus("permissions", `perm:${state.mode}`);
-  requestCoreFooterRender();
+  if (!isTrustedForLocalPermissions(ctx)) {
+    ctx.ui.notify(
+      "[permissions] local mode changes are disabled until this project is trusted",
+      "warning",
+    );
+    return;
+  }
+  await writeProjectPermissionMode(ctx.cwd, mode);
+  await refreshPermissionState(ctx, state);
 }
 
 // ── /permissions edit ────────────────────────────────────────────────────────
@@ -183,24 +213,30 @@ export async function applyPermissionMode(
 export async function editPermissionConfig(
   ctx: ExtensionCommandContext,
   state: PermissionState,
+  scope: "local" | "global" = "local",
 ): Promise<void> {
-  if (!ctx.hasUI) {
-    ctx.ui.notify(`edit ${configFilePath(ctx.cwd)} directly to modify permissions config`, "info");
+  if (scope === "local" && !isTrustedForLocalPermissions(ctx)) {
+    ctx.ui.notify(
+      "[permissions] local permission edits are disabled until this project is trusted",
+      "warning",
+    );
     return;
   }
 
-  const prefill = JSON.stringify(
-    {
-      mode: state.mode,
-      rules: toRawRules(state),
-      remembered: toRawGrants(state),
-    },
-    null,
-    2,
-  );
+  const path = scope === "global" ? defaultConfigFilePath() : configFilePath(ctx.cwd);
+  if (!ctx.hasUI) {
+    ctx.ui.notify(`edit ${path} directly to modify ${scope} permissions config`, "info");
+    return;
+  }
 
-  const edited = await ctx.ui.editor("Edit permissions config (poo/core-settings.json)", prefill);
-  if (edited === undefined) return; // cancelled
+  const current = await readEditablePermissionConfig(ctx, state, scope);
+  const prefill = `${JSON.stringify(current, null, 2)}\n`;
+
+  const edited = await ctx.ui.editor(
+    `Edit ${scope} permissions config (poo/core-settings.json)`,
+    prefill,
+  );
+  if (edited === undefined) return;
 
   let parsed: unknown;
   try {
@@ -219,14 +255,46 @@ export async function editPermissionConfig(
     return;
   }
 
-  // Valid — apply atomically
-  state.mode = result.mode;
-  state.rules = result.rules;
-  state.remembered = result.remembered;
-  await writePermissionState(ctx.cwd, state);
+  if (scope === "global")
+    await writeGlobalCorePermissionConfig(parsed as PersistedPermissionConfig);
+  else await writeProjectCorePermissionConfig(ctx.cwd, parsed as PersistedPermissionConfig);
+
+  await refreshPermissionState(ctx, state);
+  ctx.ui.notify(`[permissions] ${scope} config updated and applied`, "info");
+}
+
+/** Reload the effective permissions state into the live object and refresh UI status. */
+async function refreshPermissionState(
+  ctx: ExtensionCommandContext,
+  state: PermissionState,
+): Promise<void> {
+  const loaded = await reloadState(ctx);
+  Object.assign(state, loaded);
   ctx.ui.setStatus("permissions", `perm:${state.mode}`);
   requestCoreFooterRender();
-  ctx.ui.notify("[permissions] config updated and applied", "info");
+}
+
+/** Return whether project-local permission reads/writes are trusted for this context. */
+function isTrustedForLocalPermissions(ctx: ExtensionCommandContext): boolean {
+  const maybeCtx = ctx as ExtensionCommandContext & { isProjectTrusted?: () => boolean };
+  return maybeCtx.isProjectTrusted?.() ?? true;
+}
+
+/** Return the persisted permissions object to prefill for a local/global editor. */
+async function readEditablePermissionConfig(
+  ctx: ExtensionCommandContext,
+  state: PermissionState,
+  scope: "local" | "global",
+): Promise<PersistedPermissionConfig> {
+  if (scope === "global") {
+    return (await readGlobalCorePermissionConfig()) ?? createDefaultPermissionConfig();
+  }
+  const local = await readProjectCorePermissionConfig(ctx.cwd);
+  if (local) return local;
+  if (state.mode === "safe") return { safe: { rules: [], remembered: [] } };
+  if (state.mode === "trusted") return { trusted: { rules: [], remembered: [] } };
+  if (state.mode === "permissive") return { permissive: { rules: [], remembered: [] } };
+  return {};
 }
 
 // ── Showcase ─────────────────────────────────────────────────────────────────
@@ -279,11 +347,10 @@ function appendModeShowcase(lines: string[], mode: PermissionMode): void {
 
   if (mode === "permissive") {
     lines.push("── permissive mode ───────────────────────────────────────");
-    lines.push(" precedence: .env-deny → config deny → config allow/grant → config ask → allow");
+    lines.push(" precedence: .env-deny → config deny → config ask → config allow/grant → allow");
     lines.push(" allows:  everything by default; honors config rules");
     lines.push(" ask:     add config ask rules to prompt for specific commands/tools");
-    lines.push("   grants (Always For This Project) override the ask-list");
-    lines.push("   allow rules also override the ask-list");
+    lines.push("   ask rules override matching allow rules and remembered grants");
     lines.push(" blocks:  .env path/bash targets; config deny rules");
     lines.push(" note:    ships with no built-in ask patterns — fresh permissive allows");
     lines.push("   everything except .env targets until you add ask rules");
@@ -293,7 +360,7 @@ function appendModeShowcase(lines: string[], mode: PermissionMode): void {
 
   lines.push("── open mode ─────────────────────────────────────────────");
   lines.push(" allows:  everything (config rules ignored)");
-  lines.push(" blocks:  .env path/bash targets without an explicit allow rule");
+  lines.push(" blocks:  .env path/bash targets (no config override in open mode)");
   lines.push("");
 }
 
@@ -314,7 +381,11 @@ function appendCommonNotes(lines: string[], mode: PermissionMode): void {
   if (mode === "open" || mode === "permissive") {
     lines.push("   simple bash reads like `cat .env` are blocked too");
   }
-  lines.push("   override: add an explicit config allow rule (e.g. \\.env\\.example$)");
+  if (mode === "open") {
+    lines.push("   open mode ignores config allow overrides for .env targets");
+  } else {
+    lines.push("   override: add an explicit config allow rule (e.g. \\.env\\.example$)");
+  }
   lines.push("   note: directory scans (grep/find over a parent dir) are NOT");
   lines.push("         recursively checked — nested .env files may still surface");
   lines.push(" headless (!hasUI): write/bash/etc. are not gated in automated sessions");
@@ -324,8 +395,29 @@ function appendCommonNotes(lines: string[], mode: PermissionMode): void {
 /** Append active config and remembered grants relevant to this project. */
 function appendActiveConfig(lines: string[], state: PermissionState): void {
   lines.push("── active config ─────────────────────────────────────────");
-  lines.push(` config rules:      ${state.rules.length}`);
-  lines.push(` remembered grants: ${state.remembered.length}`);
+  const meta = state.metadata;
+  if (meta) {
+    lines.push(` mode source:       ${meta.modeSource}`);
+    lines.push(` project trusted:   ${meta.projectTrusted ? "yes" : "no"}`);
+    lines.push(` project rules:     ${meta.counts.project.rules}`);
+    lines.push(` global rules:      ${meta.counts.global.rules}`);
+    lines.push(` project grants:    ${meta.counts.project.remembered}`);
+    lines.push(` global grants:     ${meta.counts.global.remembered}`);
+    if (meta.ignoredProjectReason) lines.push(` project ignored:   ${meta.ignoredProjectReason}`);
+    if (meta.ignoredGlobalReason) lines.push(` global fallback:   ${meta.ignoredGlobalReason}`);
+    if (meta.modeSource === "project" && meta.globalMode && meta.globalMode !== state.mode) {
+      lines.push(` global default:    ${meta.globalMode} (shadowed by project mode)`);
+    }
+    if (meta.counts.overriddenRules.length > 0) {
+      lines.push(` rule overrides:    ${meta.counts.overriddenRules.length}`);
+    }
+    if (meta.counts.overriddenGrants.length > 0) {
+      lines.push(` grant overrides:   ${meta.counts.overriddenGrants.length}`);
+    }
+  } else {
+    lines.push(` config rules:      ${state.rules.length}`);
+    lines.push(` remembered grants: ${state.remembered.length}`);
+  }
   if (state.rules.length > 0) {
     lines.push("");
     lines.push(" rules:");
