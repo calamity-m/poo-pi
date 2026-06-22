@@ -101,23 +101,24 @@ untracked counters so they cannot be misread as zero:
 ## Compaction signals
 
 Compaction (summarizing and pruning earlier context) is detected per agent. Each
-parser fills a per-session `{total, auto, manual}` count; the digest header also
-surfaces it so synthesis sub-agents can correlate compactions with cross-session
-threads. **Only Claude Code records the trigger**, so for the other agents
-`auto`/`manual` stay 0 and the difference (`total - auto - manual`) is treated as
-unknown-trigger in `analyze.py`.
+parser fills a per-session `{total, auto, manual}` count; Pi additionally records
+`threshold` and `overflow` when the bundled core extension has persisted trigger
+metadata. The digest header also surfaces compactions so synthesis sub-agents can
+correlate them with cross-session threads. When a trigger is not recorded, the
+difference (`total - auto - manual`) is treated as unknown-trigger in `analyze.py`.
 
-| Agent       | Marker on disk                                                             | Auto vs manual?         |
-| ----------- | -------------------------------------------------------------------------- | ----------------------- |
-| Claude Code | `type: "system"`, `subtype: "compact_boundary"`, `compactMetadata.trigger` | Yes — `auto` / `manual` |
-| Codex       | `event_msg` payload `type: "context_compacted"`                            | No trigger recorded     |
-| Pi          | top-level line `type: "compaction"` (`tokensBefore`, `fromHook`)           | No trigger recorded     |
-| OpenCode    | assistant `message` row with `summary == true` (boolean)                   | No trigger recorded     |
+| Agent       | Marker on disk                                                                              | Auto vs manual?                                                   |
+| ----------- | ------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| Claude Code | `type: "system"`, `subtype: "compact_boundary"`, `compactMetadata.trigger`                  | Yes — `auto` / `manual`                                           |
+| Codex       | `event_msg` payload `type: "context_compacted"`                                             | No trigger recorded                                               |
+| Pi          | top-level line `type: "compaction"` plus optional custom `poo-pi.compaction-metadata` entry | Yes for new poo-pi sessions — `manual` / `threshold` / `overflow` |
+| OpenCode    | assistant `message` row with `summary == true` (boolean)                                    | No trigger recorded                                               |
 
-- **Auto-compaction is the notable signal** (it fires on context overflow mid-task
-  and can silently drop detail). Because only Claude Code distinguishes it, reports
-  flag auto-compaction counts confidently only for Claude Code; for other agents
-  the report shows total compactions without an auto/manual split.
+- **Auto-compaction is the notable signal** (it fires on threshold or context
+  overflow mid-task and can silently drop detail). Claude Code records `auto`; new
+  poo-pi sessions record Pi's `threshold`/`overflow` reasons and count both as
+  `auto`. Older Pi sessions and agents without trigger metadata still show total
+  compactions without an auto/manual split.
 - OpenCode reuses the `summary` field on _user_ messages for an unrelated diff
   object, so detection requires `role == "assistant"` and `summary is True`.
 

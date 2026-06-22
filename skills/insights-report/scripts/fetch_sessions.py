@@ -39,6 +39,7 @@ DIGEST_CHAR_CAP = 9000
 # Inter-message gaps above this are treated as idle when computing active time,
 # so a session left open overnight does not count as hours of work.
 ACTIVE_GAP_CAP_S = 30 * 60
+PI_COMPACTION_METADATA_CUSTOM_TYPE = "poo-pi.compaction-metadata"
 
 
 @dataclass
@@ -66,11 +67,13 @@ class Session:
     cancels: int = 0
     rejections: int = 0
     errors: int = 0
-    # Context-compaction events. Only Claude Code records the trigger, so for the
-    # other agents auto/manual stay 0 and (total - auto - manual) is "unknown trigger".
+    # Context-compaction events. Claude Code records trigger inline; Pi can record
+    # it via a companion custom entry emitted by the bundled core extension.
     compactions: int = 0
     auto_compactions: int = 0
     manual_compactions: int = 0
+    threshold_compactions: int = 0
+    overflow_compactions: int = 0
     # Best-effort token usage. input/output are summed per-turn for Claude Code
     # (deduped by message id — CC repeats usage on every content-block line), Pi,
     # and OpenCode, but assigned from the latest cumulative reading for Codex; cache
@@ -329,6 +332,8 @@ def parse_pi(root: Path) -> list[Session]:
     sessions: list[Session] = []
     for path in sorted(root.glob("*/*.jsonl")):
         sess = Session(agent="pi", session_id=path.stem, source_path=str(path), cwd=None)
+        compaction_reasons: dict[str, str | None] = {}
+        metadata_reasons: dict[str, str] = {}
         for ev in _iter_jsonl(path):
             etype = ev.get("type")
             if etype == "session":
@@ -336,8 +341,17 @@ def parse_pi(root: Path) -> list[Session]:
                 sess.session_id = ev.get("id", sess.session_id)
                 continue
             if etype == "compaction":
-                # Pi records compaction but no auto/manual trigger (tokensBefore, fromHook only).
-                sess.compactions += 1
+                # Pi's native compaction entry currently omits the trigger, but keep
+                # this path future-proof in case it is persisted later.
+                cid = ev.get("id")
+                compaction_reasons[cid if isinstance(cid, str) else str(len(compaction_reasons))] = ev.get("reason")
+                continue
+            if etype == "custom" and ev.get("customType") == PI_COMPACTION_METADATA_CUSTOM_TYPE:
+                data = ev.get("data") or {}
+                cid = data.get("compactionEntryId")
+                reason = data.get("reason")
+                if isinstance(cid, str) and isinstance(reason, str):
+                    metadata_reasons[cid] = reason
                 continue
             if etype != "message":
                 continue
@@ -370,9 +384,24 @@ def parse_pi(root: Path) -> list[Session]:
                 sess.messages.append(
                     Message("tool", ts, tool_name=m.get("toolName"), is_error=is_err)
                 )
+        for cid, inline_reason in compaction_reasons.items():
+            _record_compaction_reason(sess, metadata_reasons.get(cid) or inline_reason)
         if sess.messages:
             sessions.append(sess)
     return sessions
+
+
+def _record_compaction_reason(sess: Session, reason: str | None) -> None:
+    """Increment Pi compaction counters from a persisted trigger reason."""
+    sess.compactions += 1
+    if reason == "manual":
+        sess.manual_compactions += 1
+    elif reason == "threshold":
+        sess.threshold_compactions += 1
+        sess.auto_compactions += 1
+    elif reason == "overflow":
+        sess.overflow_compactions += 1
+        sess.auto_compactions += 1
 
 
 # --------------------------------------------------------------------------- #
@@ -535,7 +564,7 @@ def build_digest(s: Session) -> str:
         f"# {s.agent} session {s.session_id}",
         f"project: {s.project}  |  cwd: {s.cwd or '?'}",
         f"start: {_iso(s.start)}  |  cancels: {s.cancels}  rejections: {s.rejections}  errors: {s.errors}",
-        f"compactions: {s.compactions} (auto: {s.auto_compactions}, manual: {s.manual_compactions})",
+        f"compactions: {s.compactions} (auto: {s.auto_compactions}, manual: {s.manual_compactions}, threshold: {s.threshold_compactions}, overflow: {s.overflow_compactions})",
         f"tokens: {s.tokens_input + s.tokens_output} work ({s.tokens_input} in / {s.tokens_output} out, cache_read {s.tokens_cache_read})",
         "",
         "## Condensed transcript",
@@ -607,6 +636,8 @@ def session_record(s: Session, digest_rel: str) -> dict:
             "total": s.compactions,
             "auto": s.auto_compactions,
             "manual": s.manual_compactions,
+            "threshold": s.threshold_compactions,
+            "overflow": s.overflow_compactions,
         },
         "tokens": {
             "input": s.tokens_input,

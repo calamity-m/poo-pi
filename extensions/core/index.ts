@@ -1,6 +1,7 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { registerClear } from "./extensions/clear.ts";
+import { registerCompactionMetadata } from "./extensions/compaction-metadata.ts";
 import { registerContext } from "./extensions/context.ts";
 import { registerCoreFooter } from "./extensions/footer.ts";
 import { registerCoreHeader } from "./extensions/header.ts";
@@ -24,6 +25,7 @@ import {
  */
 export default function core(pi: ExtensionAPI) {
   registerClear(pi);
+  registerCompactionMetadata(pi);
   registerContext(pi);
   registerCoreHeader(pi);
   registerHelp(pi);

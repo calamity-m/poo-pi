@@ -100,8 +100,9 @@ def _session_length_summary(minutes: list[float], abandoned: int = 0) -> dict:
 def _compaction_summary(totals: dict, sessions_total: int, with_compaction: int, with_auto: int) -> dict:
     """Summarize compaction activity, flagging auto-compaction as a hygiene signal.
 
-    Only Claude Code records whether a compaction was automatic, so for other agents
-    the trigger is unknown (total minus the known auto/manual counts).
+    Claude Code records whether a compaction was automatic inline; Pi records the
+    trigger when the bundled core extension persisted metadata from Pi's compaction
+    event. Anything else is unknown-trigger.
     """
     total = totals["total"]
     unknown = total - totals["auto"] - totals["manual"]
@@ -115,13 +116,15 @@ def _compaction_summary(totals: dict, sessions_total: int, with_compaction: int,
         )
     else:
         interpretation = (
-            f"{total} compactions across {with_compaction} sessions. Only Claude Code reports whether a "
-            "compaction was automatic, so triggers for other agents are unknown here."
+            f"{total} compactions across {with_compaction} sessions. Some agents or older Pi sessions "
+            "do not persist the trigger, so unknown-trigger compactions may be mixed in."
         )
     return {
         "total": total,
         "auto": totals["auto"],
         "manual": totals["manual"],
+        "threshold": totals.get("threshold", 0),
+        "overflow": totals.get("overflow", 0),
         "unknown_trigger": unknown,
         "sessions_with_compaction": with_compaction,
         "sessions_with_auto": with_auto,
@@ -192,14 +195,15 @@ def analyze(index: dict) -> dict:
     sessions = index.get("sessions", [])
 
     totals_friction = {"cancels": 0, "rejections": 0, "errors": 0}
-    totals_compaction = {"total": 0, "auto": 0, "manual": 0}
+    totals_compaction = {"total": 0, "auto": 0, "manual": 0, "threshold": 0, "overflow": 0}
     totals_tokens = {"input": 0, "output": 0, "cache_read": 0}
     sessions_with_compaction = 0
     sessions_with_auto = 0
     by_agent: dict[str, dict] = defaultdict(
         lambda: {"sessions": 0, "duration_hours": 0.0, "tool_calls": 0, "user_prompts": 0,
                  "cancels": 0, "rejections": 0, "errors": 0,
-                 "compactions": 0, "auto_compactions": 0, "tokens": 0}
+                 "compactions": 0, "auto_compactions": 0, "manual_compactions": 0,
+                 "threshold_compactions": 0, "overflow_compactions": 0, "tokens": 0}
     )
     by_project: dict[str, dict] = defaultdict(
         lambda: {"sessions": 0, "duration_hours": 0.0, "agents": set(), "agent_counts": Counter(),
@@ -260,6 +264,9 @@ def analyze(index: dict) -> dict:
             a[k] += fr.get(k, 0)
         a["compactions"] += cp.get("total", 0)
         a["auto_compactions"] += cp.get("auto", 0)
+        a["manual_compactions"] += cp.get("manual", 0)
+        a["threshold_compactions"] += cp.get("threshold", 0)
+        a["overflow_compactions"] += cp.get("overflow", 0)
         a["tokens"] += session_tokens
 
         p = by_project[s.get("project", "(unknown)")]

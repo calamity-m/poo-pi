@@ -278,6 +278,9 @@ def compaction_section(compaction: dict, by_agent: list[dict]) -> str:
         ("Compactions", compaction.get("total", 0), ""),
         ("Auto", compaction.get("auto", 0), "warn" if compaction.get("auto") else ""),
         ("Manual", compaction.get("manual", 0), ""),
+        ("Threshold", compaction.get("threshold", 0), "warn" if compaction.get("threshold") else ""),
+        ("Overflow", compaction.get("overflow", 0), "bad" if compaction.get("overflow") else ""),
+        ("Unknown trigger", compaction.get("unknown_trigger", 0), ""),
         ("Sessions affected", compaction.get("sessions_with_compaction", 0), ""),
     ]
     cards_html = "".join(
@@ -286,7 +289,7 @@ def compaction_section(compaction: dict, by_agent: list[dict]) -> str:
     )
     tags = "".join(
         f'<span class="tag">{esc(a["agent"])}: {esc(a.get("compactions", 0))}'
-        + (f' (auto {esc(a["auto_compactions"])})' if a.get("auto_compactions") else "")
+        + _compaction_agent_suffix(a)
         + "</span>"
         for a in by_agent
         if a.get("compactions", 0)
@@ -294,6 +297,20 @@ def compaction_section(compaction: dict, by_agent: list[dict]) -> str:
     note = compaction.get("interpretation", "")
     tags_html = f"<div>{tags}</div>" if tags else ""
     return f'<div class="cards">{cards_html}</div><p class="note">{esc(note)}</p>{tags_html}'
+
+
+def _compaction_agent_suffix(agent: dict) -> str:
+    """Render known compaction trigger counts for one agent tag."""
+    parts = []
+    if agent.get("auto_compactions"):
+        parts.append(f"auto {esc(agent['auto_compactions'])}")
+    if agent.get("manual_compactions"):
+        parts.append(f"manual {esc(agent['manual_compactions'])}")
+    if agent.get("threshold_compactions"):
+        parts.append(f"threshold {esc(agent['threshold_compactions'])}")
+    if agent.get("overflow_compactions"):
+        parts.append(f"overflow {esc(agent['overflow_compactions'])}")
+    return f" ({', '.join(parts)})" if parts else ""
 
 
 def friction_cards(friction: dict) -> str:

@@ -69,8 +69,8 @@ python3 scripts/analyze.py --sessions "$WS/sessions.json" --out "$WS/analysis.js
 Pure aggregation: totals, activity by day, hour-of-day and day-of-week histograms
 (converted to the local timezone), a first-half vs second-half trend, session-length
 summary based on **active time** (idle gaps over 30 minutes excluded) plus an
-abandoned-starts count, compaction summary (total/auto/manual, flagging
-auto-compaction), best-effort token usage (work vs cache-read, per-agent), model
+abandoned-starts count, compaction summary (total/auto/manual plus Pi
+threshold/overflow when recorded, flagging auto-compaction), best-effort token usage (work vs cache-read, per-agent), model
 and tool-usage breakdowns, deterministic friction buckets with per-100-tool-call
 rates, per-agent and per-project breakdowns, and the highest-friction sessions.
 No model involved.

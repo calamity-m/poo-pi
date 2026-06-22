@@ -131,6 +131,33 @@ class PiParserTest(unittest.TestCase):
         # toolResult is the canonical tool turn; assistant tool_call blocks don't double it.
         self.assertEqual(sum(1 for m in s.messages if m.role == "tool"), 1)
 
+    def test_compaction_metadata_distinguishes_pi_triggers(self) -> None:
+        events = [
+            {"type": "session", "id": "s1", "cwd": "/h/proj-b"},
+            {"type": "message", "message": {
+                "role": "user", "timestamp": 1750000000000,
+                "content": [{"type": "text", "text": "hello"}]}},
+            {"type": "compaction", "id": "c-manual", "tokensBefore": 1},
+            {"type": "custom", "customType": fetch.PI_COMPACTION_METADATA_CUSTOM_TYPE,
+             "data": {"compactionEntryId": "c-manual", "reason": "manual", "willRetry": False}},
+            {"type": "compaction", "id": "c-threshold", "tokensBefore": 2},
+            {"type": "custom", "customType": fetch.PI_COMPACTION_METADATA_CUSTOM_TYPE,
+             "data": {"compactionEntryId": "c-threshold", "reason": "threshold", "willRetry": False}},
+            {"type": "compaction", "id": "c-overflow", "tokensBefore": 3},
+            {"type": "custom", "customType": fetch.PI_COMPACTION_METADATA_CUSTOM_TYPE,
+             "data": {"compactionEntryId": "c-overflow", "reason": "overflow", "willRetry": True}},
+        ]
+        with tempfile.TemporaryDirectory() as tmp:
+            root = Path(tmp)
+            _write_jsonl(root / "proj" / "x.jsonl", events)
+            sessions = fetch.parse_pi(root)
+        s = sessions[0]
+        self.assertEqual(s.compactions, 3)
+        self.assertEqual(s.manual_compactions, 1)
+        self.assertEqual(s.auto_compactions, 2)
+        self.assertEqual(s.threshold_compactions, 1)
+        self.assertEqual(s.overflow_compactions, 1)
+
 
 class CodexParserTest(unittest.TestCase):
     def test_cumulative_tokens_and_cancel(self) -> None:
@@ -262,7 +289,7 @@ class AnalyzeTest(unittest.TestCase):
             "duration_min": 60.0, "active_min": 45.0, "models": ["model-a"],
             "counts": {"user": 5, "assistant": 5, "tool_calls": 20, "messages": 30},
             "friction": {"cancels": 1, "rejections": 0, "errors": 1},
-            "compaction": {"total": 0, "auto": 0, "manual": 0},
+            "compaction": {"total": 0, "auto": 0, "manual": 0, "threshold": 0, "overflow": 0},
             "tokens": {"input": 100, "output": 50, "cache_read": 0, "total": 150},
             "tools": {"bash": {"calls": 15, "errors": 1}, "edit": {"calls": 5, "errors": 0}},
             "first_user_prompt": "do the thing",
@@ -307,6 +334,22 @@ class AnalyzeTest(unittest.TestCase):
         self.assertIsNotNone(trend)
         self.assertEqual(trend["first_half"]["sessions"], 2)
         self.assertEqual(trend["second_half"]["sessions"], 2)
+
+    def test_compaction_reason_breakdown(self) -> None:
+        session = self._session(compaction={
+            "total": 3,
+            "auto": 2,
+            "manual": 1,
+            "threshold": 1,
+            "overflow": 1,
+        })
+        analysis = analyze_mod.analyze({"sessions": [session]})
+        self.assertEqual(analysis["compaction"]["manual"], 1)
+        self.assertEqual(analysis["compaction"]["threshold"], 1)
+        self.assertEqual(analysis["compaction"]["overflow"], 1)
+        agent = analysis["by_agent"][0]
+        self.assertEqual(agent["manual_compactions"], 1)
+        self.assertEqual(agent["overflow_compactions"], 1)
 
 
 class MergeSynthesisTest(unittest.TestCase):
