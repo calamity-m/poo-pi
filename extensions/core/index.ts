@@ -9,6 +9,7 @@ import { registerGatedT1 } from "./extensions/gated-t1.ts";
 import { registerHelp } from "./extensions/help.ts";
 import { registerHistorySearch } from "./extensions/history-search.ts";
 import { registerInterview } from "./extensions/interview/index.ts";
+import { registerLumen } from "./extensions/lumen.ts";
 import { registerPermissions } from "./extensions/permissions/index.ts";
 import { registerPrompt } from "./extensions/prompt.ts";
 import { registerProxy } from "./extensions/proxy/index.ts";
@@ -34,6 +35,7 @@ export default function core(pi: ExtensionAPI) {
   registerHelp(pi);
   registerHistorySearch(pi);
   registerInterview(pi);
+  registerLumen(pi);
   registerPrompt(pi);
   registerSkills(pi);
   registerThemeSwitcher(pi);
