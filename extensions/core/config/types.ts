@@ -42,6 +42,30 @@ export interface CoreWorktreeSettings {
   root?: string;
 }
 
+/** One persisted autoformatter command rule. */
+export interface CoreAutoformatterRule {
+  /** Stable rule id used in diagnostics and language-less project overrides. */
+  id: string;
+  /** Optional language labels used as project override keys. */
+  languages?: string[];
+  /** File extensions matched by this rule, including the leading dot. */
+  extensions: string[];
+  /** Executable to spawn without a shell. */
+  command: string;
+  /** Command arguments; `{file}` is replaced as an argv value. */
+  args?: string[];
+  /** Working directory selector: `project` or an absolute path. */
+  cwd?: "project" | string;
+  /** Formatter timeout in milliseconds. */
+  timeoutMs?: number;
+}
+
+/** Autoformatter settings persisted by core. */
+export interface CoreAutoformatterSettings {
+  /** Ordered formatter rules. */
+  formatters?: CoreAutoformatterRule[];
+}
+
 /** Footer settings persisted by core. */
 export interface CoreFooterSettings {
   /** Whether the core status footer should replace Pi's default footer. */
@@ -66,4 +90,6 @@ export interface CoreSettings {
   footer?: CoreFooterSettings;
   /** Managed Git worktree settings. */
   worktrees?: CoreWorktreeSettings;
+  /** Automatic formatter settings. */
+  autoformatter?: CoreAutoformatterSettings;
 }

@@ -1,6 +1,6 @@
 import { readFileSync } from "node:fs";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { dirname } from "node:path";
+import { dirname, isAbsolute } from "node:path";
 
 import type { RedactionMode } from "../extensions/proxy/types.ts";
 import { NON_OPEN_PERMISSION_MODES } from "../extensions/permissions/types.ts";
@@ -15,6 +15,7 @@ import type {
 import { createDefaultCoreSettings } from "./defaults.ts";
 import { coreSettingsPath, globalCoreSettingsPath, projectCoreSettingsPath } from "./paths.ts";
 import type {
+  CoreAutoformatterSettings,
   CoreFooterSettings,
   CoreHistorySearchSettings,
   CoreSettings,
@@ -213,6 +214,8 @@ export function validateCoreSettings(value: unknown): CoreSettings | string {
   if (historySearchError) return historySearchError;
   const worktreeError = validateWorktreeSection(value["worktrees"]);
   if (worktreeError) return worktreeError;
+  const autoformatterError = validateAutoformatterSection(value["autoformatter"]);
+  if (autoformatterError) return autoformatterError;
   return parseCoreSettings(value) ?? createDefaultCoreSettings();
 }
 
@@ -239,6 +242,9 @@ export function parseCoreSettings(value: unknown): CoreSettings | undefined {
 
   const worktrees = parseWorktreeSettings(raw["worktrees"]);
   if (worktrees) out.worktrees = worktrees;
+
+  const autoformatter = parseAutoformatterSettings(raw["autoformatter"]);
+  if (autoformatter) out.autoformatter = autoformatter;
 
   return out;
 }
@@ -338,6 +344,24 @@ export function validateWorktreeSection(value: unknown): string | undefined {
   return undefined;
 }
 
+/** Validate the autoformatter section when present in edited core settings. */
+export function validateAutoformatterSection(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (!isRecord(value)) return '"autoformatter" must be an object';
+  const formatters = value["formatters"];
+  if (formatters !== undefined && !Array.isArray(formatters)) {
+    return '"autoformatter.formatters" must be an array';
+  }
+  if (Array.isArray(formatters)) {
+    for (const [index, formatter] of formatters.entries()) {
+      const path = `autoformatter.formatters[${index}]`;
+      const error = validateAutoformatterRule(formatter, path);
+      if (error) return error;
+    }
+  }
+  return undefined;
+}
+
 /** Validate the subagents section when present in edited core settings. */
 export function validateSubagentSection(value: unknown): string | undefined {
   if (value === undefined) return undefined;
@@ -355,6 +379,16 @@ export function validateSubagentSection(value: unknown): string | undefined {
     }
   }
   return undefined;
+}
+
+/** Parse autoformatter settings, dropping invalid rules. */
+function parseAutoformatterSettings(value: unknown): CoreAutoformatterSettings | undefined {
+  if (!isRecord(value)) return undefined;
+  const formatters = Array.isArray(value["formatters"])
+    ? value["formatters"].map(parseAutoformatterRule).filter((rule) => rule !== undefined)
+    : undefined;
+  if (!formatters || formatters.length === 0) return undefined;
+  return { formatters };
 }
 
 /** Parse history search settings, dropping invalid fields. */
@@ -524,6 +558,71 @@ function parseSubagentSettings(value: unknown): CoreSubagentSettings | undefined
     };
   }
   return out.fast || out.high ? out : undefined;
+}
+
+/** Validate one autoformatter rule. */
+function validateAutoformatterRule(value: unknown, path: string): string | undefined {
+  if (!isRecord(value)) return `"${path}" must be an object`;
+  if (typeof value["id"] !== "string" || value["id"].trim() === "") {
+    return `"${path}.id" must be a non-empty string`;
+  }
+  if (typeof value["command"] !== "string" || value["command"].trim() === "") {
+    return `"${path}.command" must be a non-empty string`;
+  }
+  if (
+    !isStringArray(value["extensions"]) ||
+    value["extensions"].length === 0 ||
+    value["extensions"].some((item) => !item.startsWith("."))
+  ) {
+    return `"${path}.extensions" must be an array of dot-prefixed strings`;
+  }
+  if (value["languages"] !== undefined && !isStringArray(value["languages"])) {
+    return `"${path}.languages" must be an array of strings`;
+  }
+  if (value["args"] !== undefined && !isStringArray(value["args"])) {
+    return `"${path}.args" must be an array of strings`;
+  }
+  const cwd = value["cwd"];
+  if (
+    cwd !== undefined &&
+    (typeof cwd !== "string" || cwd.trim() === "" || (cwd !== "project" && !isAbsolute(cwd)))
+  ) {
+    return `"${path}.cwd" must be "project" or an absolute path string`;
+  }
+  const timeoutMs = value["timeoutMs"];
+  if (
+    timeoutMs !== undefined &&
+    (typeof timeoutMs !== "number" || !Number.isInteger(timeoutMs) || timeoutMs <= 0)
+  ) {
+    return `"${path}.timeoutMs" must be a positive integer`;
+  }
+  return undefined;
+}
+
+/** Parse one autoformatter rule, dropping invalid fields. */
+function parseAutoformatterRule(
+  value: unknown,
+): NonNullable<CoreAutoformatterSettings["formatters"]>[number] | undefined {
+  if (validateAutoformatterRule(value, "autoformatter.formatters[]")) return undefined;
+  const raw = value as Record<string, unknown>;
+  return {
+    id: String(raw["id"]).trim(),
+    ...(isStringArray(raw["languages"])
+      ? { languages: raw["languages"].map((item) => item.trim()) }
+      : {}),
+    extensions: (raw["extensions"] as string[]).map((item) => item.trim()),
+    command: String(raw["command"]).trim(),
+    ...(isStringArray(raw["args"]) ? { args: raw["args"] } : {}),
+    ...(typeof raw["cwd"] === "string" ? { cwd: raw["cwd"].trim() } : {}),
+    ...(typeof raw["timeoutMs"] === "number" ? { timeoutMs: raw["timeoutMs"] } : {}),
+  };
+}
+
+/** Return whether a value is an array of non-empty strings. */
+function isStringArray(value: unknown): value is string[] {
+  return (
+    Array.isArray(value) && value.every((item) => typeof item === "string" && item.trim() !== "")
+  );
 }
 
 /** Return whether a value is a canonical provider/model-id string. */

@@ -96,6 +96,62 @@ test("validateCoreSettings returns normalized settings with subagents", () => {
   assert.deepEqual(typeof result === "string" ? undefined : result.subagents, validSubagents);
 });
 
+test("parseCoreSettings retains valid autoformatter rules", () => {
+  assert.deepEqual(
+    parseCoreSettings({
+      version: 1,
+      autoformatter: {
+        formatters: [
+          {
+            id: "typescript-oxfmt",
+            languages: ["typescript"],
+            extensions: [".ts", ".tsx"],
+            command: "oxfmt",
+            args: ["--write", "{file}"],
+            cwd: "project",
+            timeoutMs: 10000,
+          },
+        ],
+      },
+    })?.autoformatter?.formatters?.[0],
+    {
+      id: "typescript-oxfmt",
+      languages: ["typescript"],
+      extensions: [".ts", ".tsx"],
+      command: "oxfmt",
+      args: ["--write", "{file}"],
+      cwd: "project",
+      timeoutMs: 10000,
+    },
+  );
+});
+
+test("validateCoreSettings rejects invalid autoformatter rules", () => {
+  assert.match(
+    validateCoreSettings({
+      version: 1,
+      autoformatter: { formatters: [{ id: "bad", extensions: ["ts"], command: "fmt" }] },
+    }),
+    /extensions/,
+  );
+  assert.match(
+    validateCoreSettings({
+      version: 1,
+      autoformatter: { formatters: [{ id: "bad", extensions: [], command: "fmt" }] },
+    }),
+    /extensions/,
+  );
+  assert.match(
+    validateCoreSettings({
+      version: 1,
+      autoformatter: {
+        formatters: [{ id: "bad", extensions: [".ts"], command: "fmt", cwd: "relative" }],
+      },
+    }),
+    /cwd/,
+  );
+});
+
 test("parseCoreSettings retains a valid worktrees root", () => {
   assert.deepEqual(
     parseCoreSettings({ version: 1, worktrees: { root: "~/.pi/worktrees" } })?.worktrees,

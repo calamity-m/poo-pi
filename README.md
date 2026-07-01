@@ -55,6 +55,7 @@ Pi discovers package resources from `package.json`:
 
 ```text
 extensions/
+  autoformatter/index.ts
   core/index.ts
 skills/
   pi-package-maintainer/SKILL.md
@@ -70,6 +71,7 @@ themes/
 
 ## Extension docs
 
+- [Autoformatter](docs/extensions/AUTOFORMATTER.md)
 - [Core settings](docs/extensions/CORE_SETTINGS.md)
 - [Context usage](docs/extensions/CONTEXT.md)
 - [Worktrees](docs/extensions/WORKTREES.md)
