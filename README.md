@@ -24,13 +24,7 @@ pi update
 For local development, install this checkout by path so Pi loads resources directly from the repo on disk:
 
 ```bash
-pi install /home/calam/code/poo-pi
-```
-
-Use project-local settings instead of global user settings with:
-
-```bash
-pi install /home/calam/code/poo-pi -l --approve
+pi install /path/to/repo/poo-pi
 ```
 
 After editing extensions, skills, or prompts, restart Pi or run `/reload`. Themes hot-reload automatically.
